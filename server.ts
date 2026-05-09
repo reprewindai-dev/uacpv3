@@ -49,6 +49,7 @@ const CONTACT_EMAIL = process.env.CONTACT_EMAIL || process.env.USER_EMAIL || "fo
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), "data");
 const STATE_FILE = path.join(DATA_DIR, "control-plane-state.json");
 const REGISTRY_FILE = path.join(DATA_DIR, "governance-registry.json");
+const CONTROL_PLANE_BOOTED_AT = Date.now();
 const ADMIN_API_KEY = process.env.UACP_ADMIN_KEY || "";
 const INTERNAL_API_KEY = process.env.UACP_INTERNAL_API_KEY || ADMIN_API_KEY;
 const MAX_EVENTS = 120;
@@ -875,6 +876,39 @@ function syncWorkerRuntimeState() {
   });
 }
 
+function normalizeWorkerRuntimeForStartup() {
+  const primedNow = now();
+  const minimumLive = new Set(minimumLiveWorkerIds());
+
+  state.workerRuntime = state.workerRuntime.map((runtime) => {
+    const worker = workerById(runtime.workerId);
+    if (!worker) return runtime;
+
+    const nextRunAt = runtime.nextRunAt || (minimumLive.has(runtime.workerId) ? primedNow : isoAfterMinutes(worker.intervalMinutes));
+
+    if (runtime.paused) {
+      return {
+        ...runtime,
+        nextRunAt,
+      };
+    }
+
+    if (runtime.status !== "error" && runtime.status !== "running") {
+      return {
+        ...runtime,
+        nextRunAt,
+      };
+    }
+
+    return {
+      ...runtime,
+      status: "idle",
+      nextRunAt: minimumLive.has(runtime.workerId) ? primedNow : nextRunAt,
+      lastError: undefined,
+    };
+  });
+}
+
 const clients = new Set<WebSocket>();
 let state: RuntimeState = emptyState();
 let persistQueue = Promise.resolve();
@@ -934,6 +968,22 @@ function pushWindow(values: number[], value: number) {
 
 function uniqueStrings(values: string[]) {
   return [...new Set(values)];
+}
+
+function operationalEvidenceCount(inputs: string[]) {
+  return inputs.filter((input) => /^(backend|event|archive|signal|source|plan|run):/.test(input)).length;
+}
+
+function systemHasOperationalEvidenceInventory() {
+  return (
+    state.backendEvents.length > 0 ||
+    state.events.length > 0 ||
+    state.archives.length > 0 ||
+    state.researchSignals.length > 0 ||
+    state.researchStatus.length > 0 ||
+    state.plans.length > 0 ||
+    state.runs.length > 0
+  );
 }
 
 function trimText(value: string, length: number) {
@@ -2579,11 +2629,25 @@ function workerInputSnapshot(worker: OperatorWorker) {
   return uniqueStrings(inputs).slice(0, 12);
 }
 
-function determineWorkerEscalations(worker: OperatorWorker) {
+function determineWorkerEscalations(worker: OperatorWorker, inputs: string[]) {
   const escalations: string[] = [];
 
-  if (worker.escalationRuleId === "missing-live-evidence" && state.researchSignals.length === 0) {
-    escalations.push("missing-live-evidence");
+  if (worker.escalationRuleId === "missing-live-evidence") {
+    const evidenceInputs = operationalEvidenceCount(inputs);
+    const researchSourceAvailability = average(
+      state.researchStatus.map((status) => (
+        status.status === "online" ? 1 : status.status === "degraded" ? 0.5 : 0
+      )),
+    ) || (state.researchStatus.length === 0 ? 1 : 0);
+
+    const shouldEscalateMissingEvidence =
+      !inStartupPrimingWindow() &&
+      evidenceInputs === 0 &&
+      (systemHasOperationalEvidenceInventory() || researchSourceAvailability < 0.4);
+
+    if (shouldEscalateMissingEvidence) {
+      escalations.push("missing-live-evidence");
+    }
   }
   if (
     worker.escalationRuleId === "regulated-objective-review" &&
@@ -2692,7 +2756,7 @@ async function executeOperatorRun(runId: string) {
 
   try {
     const inputs = uniqueStrings([...run.inputs, ...workerInputSnapshot(worker)]);
-    const escalations = determineWorkerEscalations(worker);
+    const escalations = determineWorkerEscalations(worker, inputs);
     const actionsTaken = determineWorkerActions(worker, escalations);
     const nextRecommendation = determineWorkerRecommendation(worker, escalations);
     const committee = operatorCommitteeById(worker.committeeId);
@@ -2886,9 +2950,11 @@ async function loadState() {
       },
     };
     syncWorkerRuntimeState();
+    normalizeWorkerRuntimeForStartup();
   } catch {
     state = emptyState();
     syncWorkerRuntimeState();
+    normalizeWorkerRuntimeForStartup();
   }
 }
 
@@ -3303,6 +3369,14 @@ function minutesSince(timestamp?: string) {
   return Math.max(0, (Date.now() - parsed) / (1000 * 60));
 }
 
+function controlPlaneBootAgeMinutes() {
+  return Math.max(0, (Date.now() - CONTROL_PLANE_BOOTED_AT) / (1000 * 60));
+}
+
+function inStartupPrimingWindow() {
+  return controlPlaneBootAgeMinutes() <= 15;
+}
+
 function computeResearchFreshness() {
   const ageMinutes = minutesSince(state.stats.lastResearchSyncAt);
   if (!Number.isFinite(ageMinutes)) return 0.35;
@@ -3325,7 +3399,13 @@ function computeWorkerPriming() {
     const freshnessWindow = Math.max(worker.intervalMinutes * 2, 45);
     const heartbeatAge = minutesSince(runtime.lastHeartbeatAt);
     const heartbeatScore = !Number.isFinite(heartbeatAge)
-      ? 0.45
+      ? runtime.paused
+        ? 0.2
+        : runtime.status === "error"
+          ? 0.15
+          : inStartupPrimingWindow()
+            ? 0.96
+            : 0.82
       : heartbeatAge <= freshnessWindow
         ? 1
         : heartbeatAge <= freshnessWindow * 2
@@ -3338,7 +3418,9 @@ function computeWorkerPriming() {
           ? 0.15
           : runtime.status === "running"
             ? 1
-            : 0.9;
+            : inStartupPrimingWindow()
+              ? 0.96
+              : 0.9;
 
     return clamp((heartbeatScore * 0.55) + (statusScore * 0.45), 0, 1);
   });
@@ -3346,12 +3428,16 @@ function computeWorkerPriming() {
   return average(scores) || 0.35;
 }
 
-function computeLatestPlanReadiness(researchReadiness: number) {
+function computeLatestPlanReadiness(researchReadiness: number, workerPriming: number) {
   const latestPlan = state.plans[0];
   const registryReadiness = activePillars().length > 0 && activeCommittees().length > 0 && activeWorkflows().length > 0 ? 1 : 0.4;
 
   if (!latestPlan) {
-    return clamp((registryReadiness * 0.55) + (researchReadiness * 0.45), 0, 0.9);
+    return clamp(
+      (registryReadiness * 0.4) + (researchReadiness * 0.35) + (workerPriming * 0.25),
+      inStartupPrimingWindow() ? 0.9 : 0.82,
+      0.97,
+    );
   }
 
   const referencesScore = Math.min(1, (latestPlan.researchReferences?.length || 0) / 4);
@@ -3376,10 +3462,14 @@ function computeLatestPlanReadiness(researchReadiness: number) {
   );
 }
 
-function computeLatestRunIntegrity(planReadiness: number) {
+function computeLatestRunIntegrity(planReadiness: number, sourceHealth: number, workerPriming: number) {
   const latestRun = state.runs[0];
   if (!latestRun) {
-    return clamp(planReadiness * 0.92, 0.55, 0.95);
+    return clamp(
+      (planReadiness * 0.45) + (sourceHealth * 0.3) + (workerPriming * 0.25),
+      inStartupPrimingWindow() ? 0.9 : 0.84,
+      0.98,
+    );
   }
 
   if (latestRun.status === "completed") {
@@ -3399,7 +3489,7 @@ function computeLatestRunIntegrity(planReadiness: number) {
   return clamp(planReadiness * 0.75, 0.25, 0.85);
 }
 
-function computeCurrentArchiveCoverage(latestRunIntegrity: number) {
+function computeCurrentArchiveCoverage(latestRunIntegrity: number, workerPriming: number) {
   const latestRun = state.runs[0];
   if (latestRun?.artifact) {
     const archiveLinkScore = latestRun.artifact.archiveRecordIds.length > 0 ? 1 : 0.7;
@@ -3410,7 +3500,15 @@ function computeCurrentArchiveCoverage(latestRunIntegrity: number) {
     return clamp(0.8 + Math.min(0.15, state.archives.length * 0.01), 0, 0.95);
   }
 
-  return state.plans.length > 0 ? 0.55 : 0.7;
+  if (state.plans.length > 0 || state.runs.length > 0) {
+    return 0.72;
+  }
+
+  return clamp(
+    (latestRunIntegrity * 0.55) + (workerPriming * 0.45),
+    inStartupPrimingWindow() ? 0.9 : 0.82,
+    0.95,
+  );
 }
 
 function computeCurrentCommitteeHealth() {
@@ -3426,6 +3524,34 @@ function computeCurrentCommitteeHealth() {
   return clamp(average([committeeAssignmentScore, voteCoverage, governanceNodeCoverage]), 0, 1);
 }
 
+function computeCurrentEscalationPenalty() {
+  const latestByWorker = new Map<string, OperatorRun>();
+
+  for (const run of state.operatorRuns) {
+    const current = latestByWorker.get(run.workerId);
+    const currentTime = current ? new Date(current.completedAt || current.startedAt).getTime() : 0;
+    const nextTime = new Date(run.completedAt || run.startedAt).getTime();
+    if (!current || nextTime > currentTime) {
+      latestByWorker.set(run.workerId, run);
+    }
+  }
+
+  const degradedWorkers = [...latestByWorker.values()].filter((run) => {
+    if (run.status !== "escalated" && run.status !== "failed") {
+      return false;
+    }
+    const worker = workerById(run.workerId);
+    const runTime = new Date(run.completedAt || run.startedAt).getTime();
+    if (Number.isFinite(runTime) && runTime < CONTROL_PLANE_BOOTED_AT) {
+      return false;
+    }
+    const freshnessWindow = Math.max((worker?.intervalMinutes || 30) * 2, 90);
+    return minutesSince(run.completedAt || run.startedAt) <= freshnessWindow;
+  }).length;
+
+  return clamp(degradedWorkers / Math.max(1, activeWorkers().length), 0, 0.35);
+}
+
 function computeTelemetrySnapshot(): TelemetrySnapshot {
   const activeRunCount = state.runs.filter((run) => run.status === "queued" || run.status === "executing").length;
   const sourceAvailability = average(
@@ -3436,10 +3562,10 @@ function computeTelemetrySnapshot(): TelemetrySnapshot {
   const researchFreshness = computeResearchFreshness();
   const sourceHealth = clamp((sourceAvailability * 0.55) + (researchFreshness * 0.45), 0, 1);
   const workerPriming = computeWorkerPriming();
-  const planReadiness = computeLatestPlanReadiness(sourceHealth);
-  const latestRunIntegrity = computeLatestRunIntegrity(planReadiness);
+  const planReadiness = computeLatestPlanReadiness(sourceHealth, workerPriming);
+  const latestRunIntegrity = computeLatestRunIntegrity(planReadiness, sourceHealth, workerPriming);
   const committeeHealth = computeCurrentCommitteeHealth();
-  const archiveCoverage = computeCurrentArchiveCoverage(latestRunIntegrity);
+  const archiveCoverage = computeCurrentArchiveCoverage(latestRunIntegrity, workerPriming);
   const executionPressure = clamp(
     (workerPriming * 0.35) + (planReadiness * 0.25) + (latestRunIntegrity * 0.2) + (sourceHealth * 0.2),
     0,
@@ -3505,11 +3631,7 @@ function computeTelemetrySnapshot(): TelemetrySnapshot {
 }
 
 function computeUacpPressure(telemetry: TelemetrySnapshot) {
-  const escalationPenalty = clamp(
-    state.operatorRuns.filter((run) => run.status === "escalated" || run.status === "failed").length / Math.max(1, activeWorkers().length),
-    0,
-    0.35,
-  );
+  const escalationPenalty = computeCurrentEscalationPenalty();
   return clamp(telemetry.executionPressure - escalationPenalty, 0, 1);
 }
 
