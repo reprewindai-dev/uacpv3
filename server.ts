@@ -38,6 +38,9 @@ import type {
   ModelProviderId,
   ModelProviderSnapshot,
   ModelProviderStatus,
+  OutboundContact,
+  OutboundMessage,
+  OutboundRuntimeSnapshot,
   OperatorRun,
   OperatorWorker,
   Pillar,
@@ -94,6 +97,12 @@ const WORKER_GROUP = process.env.UACP_WORKER_GROUP || "control_plane";
 const ARCHIVE_WRITE_REQUIRED = /^(1|true|yes|on)$/i.test(process.env.UACP_ARCHIVE_WRITE_REQUIRED || "");
 const UACP_BACKEND_BASE_URL = String(process.env.UACP_BACKEND_BASE_URL || process.env.UACP_BACKEND_URL || "").trim().replace(/\/+$/, "");
 const UACP_BACKEND_TIMEOUT_MS = Math.max(2000, Number(process.env.UACP_BACKEND_TIMEOUT_MS || 8000) || 8000);
+const UACP_SCHEDULER_MAX_RELEASE_PER_TICK = Math.max(1, Number(process.env.UACP_SCHEDULER_MAX_RELEASE_PER_TICK || 3) || 3);
+const UACP_SCHEDULER_MIN_STAGGER_MINUTES = Math.max(1, Number(process.env.UACP_SCHEDULER_MIN_STAGGER_MINUTES || 2) || 2);
+const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
+const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "";
+const UACP_OUTBOUND_REPLY_TO = process.env.UACP_OUTBOUND_REPLY_TO || "";
+const UACP_OUTBOUND_MAX_SENDS_PER_RUN = Math.max(1, Number(process.env.UACP_OUTBOUND_MAX_SENDS_PER_RUN || 2) || 2);
 const UPSTASH_REDIS_REST_URL = process.env.UPSTASH_REDIS_REST_URL || "";
 const UPSTASH_REDIS_REST_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || "";
 const RATE_LIMIT_TRUST_ACCESS_TIER_HEADER = /^(1|true|yes|on)$/i.test(
@@ -1030,6 +1039,8 @@ type RuntimeState = {
   runs: GovernedRun[];
   operatorRuns: OperatorRun[];
   workerRuntime: WorkerRuntimeState[];
+  outboundContacts: OutboundContact[];
+  outboundMessages: OutboundMessage[];
   backendEvents: BackendProductEvent[];
   backendSummary: BackendTruthSummary;
   events: EventItem[];
@@ -1616,6 +1627,29 @@ function committeeRegroupIntervalMinutes(committee: OperatorCommittee) {
   return committee.regroupIntervalMinutes || Math.max(1, Math.floor((24 * 60) / Math.max(1, committee.cadencePerDay || 3)));
 }
 
+function workerConveyorOffsetMinutes(worker: OperatorWorker) {
+  const committee = operatorCommitteeById(worker.committeeId);
+  if (!committee) {
+    return 0;
+  }
+
+  const index = Math.max(0, committee.workerIds.indexOf(worker.id));
+  const spacing = clamp(
+    Math.floor(Math.max(1, Math.min(worker.intervalMinutes, committeeRegroupIntervalMinutes(committee))) / Math.max(1, committee.workerIds.length)),
+    UACP_SCHEDULER_MIN_STAGGER_MINUTES,
+    15,
+  );
+
+  return index * spacing;
+}
+
+function initialWorkerNextRunAt(worker: OperatorWorker) {
+  const offsetMinutes = workerConveyorOffsetMinutes(worker);
+  return minimumLiveWorkerIds().includes(worker.id)
+    ? isoAfterMinutes(offsetMinutes)
+    : isoAfterMinutes(worker.intervalMinutes + offsetMinutes);
+}
+
 function committeeBacklog(committeeId: string) {
   const window = activeExecutionWindow();
   return window.backlogByCommittee[committeeId] || [];
@@ -1809,9 +1843,6 @@ function buildGovernanceBackbone() {
 }
 
 function makeWorkerRuntime(worker: OperatorWorker): WorkerRuntimeState {
-  const initialNextRunAt = minimumLiveWorkerIds().includes(worker.id)
-    ? now()
-    : isoAfterMinutes(worker.intervalMinutes);
   return {
     workerId: worker.id,
     status: "idle",
@@ -1819,7 +1850,7 @@ function makeWorkerRuntime(worker: OperatorWorker): WorkerRuntimeState {
     lastHeartbeatAt: undefined,
     lastRunAt: undefined,
     lastRunId: undefined,
-    nextRunAt: initialNextRunAt,
+    nextRunAt: initialWorkerNextRunAt(worker),
     lastError: undefined,
   };
 }
@@ -1832,21 +1863,20 @@ function syncWorkerRuntimeState() {
       ? {
           ...existing,
           workerId: worker.id,
-          nextRunAt: existing.nextRunAt || isoAfterMinutes(worker.intervalMinutes),
+          nextRunAt: existing.nextRunAt || initialWorkerNextRunAt(worker),
         }
       : makeWorkerRuntime(worker);
   });
 }
 
 function normalizeWorkerRuntimeForStartup() {
-  const primedNow = now();
   const minimumLive = new Set(minimumLiveWorkerIds());
 
   state.workerRuntime = state.workerRuntime.map((runtime) => {
     const worker = workerById(runtime.workerId);
     if (!worker) return runtime;
 
-    const nextRunAt = runtime.nextRunAt || (minimumLive.has(runtime.workerId) ? primedNow : isoAfterMinutes(worker.intervalMinutes));
+    const nextRunAt = runtime.nextRunAt || initialWorkerNextRunAt(worker);
 
     if (runtime.paused) {
       return {
@@ -1865,7 +1895,7 @@ function normalizeWorkerRuntimeForStartup() {
     return {
       ...runtime,
       status: "idle",
-      nextRunAt: minimumLive.has(runtime.workerId) ? primedNow : nextRunAt,
+      nextRunAt: minimumLive.has(runtime.workerId) ? initialWorkerNextRunAt(worker) : nextRunAt,
       lastError: undefined,
     };
   });
@@ -2264,6 +2294,8 @@ function emptyState(): RuntimeState {
     runs: [],
     operatorRuns: [],
     workerRuntime: [],
+    outboundContacts: [],
+    outboundMessages: [],
     backendEvents: [],
     backendSummary: emptyBackendTruthSummary(),
     events: [],
@@ -4019,6 +4051,281 @@ function getPayloadString(payload: Record<string, unknown>, keys: string[]) {
   return undefined;
 }
 
+function sanitizeEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
+function extractOutboundEmail(payload: Record<string, unknown>) {
+  const email = getPayloadString(payload, [
+    "email",
+    "contact_email",
+    "contactEmail",
+    "owner_email",
+    "ownerEmail",
+    "user_email",
+    "userEmail",
+    "billing_email",
+    "billingEmail",
+  ]);
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return undefined;
+  }
+  return sanitizeEmail(email);
+}
+
+function isVendorOrPartnerEvent(event: BackendProductEvent) {
+  const text = `${event.eventType} ${event.entityType} ${event.status} ${JSON.stringify(event.payload)}`.toLowerCase();
+  return /(vendor|partner|affiliate|channel|integration|reseller|supplier)/.test(text);
+}
+
+function outboundContactId(kind: OutboundContact["kind"], email: string) {
+  const token = Buffer.from(`${kind}:${sanitizeEmail(email)}`).toString("base64url").slice(0, 16);
+  return `outc-${token}`;
+}
+
+function upsertOutboundContact(input: Omit<OutboundContact, "id" | "createdAt" | "updatedAt" | "attemptCount"> & { attemptCount?: number }) {
+  const email = sanitizeEmail(input.email);
+  const id = outboundContactId(input.kind, email);
+  const current = state.outboundContacts.find((contact) => contact.id === id);
+  const timestamp = now();
+  const next: OutboundContact = current
+    ? {
+        ...current,
+        ...input,
+        email,
+        sourceEventIds: uniqueStrings([...(current.sourceEventIds || []), ...(input.sourceEventIds || [])]),
+        updatedAt: timestamp,
+      }
+    : {
+        id,
+        createdAt: timestamp,
+        updatedAt: timestamp,
+        attemptCount: input.attemptCount ?? 0,
+        ...input,
+        email,
+      };
+
+  state.outboundContacts = [next, ...state.outboundContacts.filter((contact) => contact.id !== id)];
+  return next;
+}
+
+function queueOutboundContactFromBackendEvent(event: BackendProductEvent) {
+  const email = extractOutboundEmail(event.payload);
+  if (!email) return;
+
+  const vendor = isVendorOrPartnerEvent(event);
+  const accountLabel =
+    getPayloadString(event.payload, ["workspace_name", "workspaceName", "organization", "org", "account_name", "vendor_name", "company"]) ||
+    event.workspaceId ||
+    event.entityId;
+  const company = getPayloadString(event.payload, ["company", "vendor_name", "organization", "org"]);
+
+  upsertOutboundContact({
+    kind: vendor ? "vendor" : "customer",
+    email,
+    accountLabel,
+    company,
+    workspaceId: event.workspaceId,
+    sourceEventIds: [event.eventId],
+    assignedWorkerId: vendor ? "vendor-recruiter" : "welcome",
+    status: "queued",
+    lastActivityAt: event.timestamp,
+    metadata: {
+      entityType: event.entityType,
+      entityId: event.entityId,
+      eventType: event.eventType,
+      severity: event.severity,
+    },
+  });
+}
+
+function latestApprovedOutreachArtifact() {
+  return state.v3CommercialArtifacts.find((artifact) => artifact.type === "outreach_asset" && artifact.founderReview.status === "approved");
+}
+
+function latestApprovedOfferArtifact() {
+  return state.v3CommercialArtifacts.find((artifact) => artifact.type === "buyer_facing_offer" && artifact.founderReview.status === "approved");
+}
+
+function buildOutboundMessageDraft(contact: OutboundContact) {
+  if (contact.kind === "customer") {
+    const outreach = latestApprovedOutreachArtifact();
+    const subject = outreach?.copy?.headline || "A governed AI workflow gap we can fix fast";
+    const bodyLines = outreach?.copy
+      ? [
+          `Hi ${contact.accountLabel},`,
+          "",
+          outreach.copy.headline,
+          outreach.copy.subheadline,
+          "",
+          ...(outreach.copy.body || []),
+          "",
+          outreach.copy.cta || "Reply if you want a walkthrough.",
+        ]
+      : [
+          `Hi ${contact.accountLabel},`,
+          "",
+          "We help private AI teams turn model testing into governed execution with replayable proof, policy alignment, and cost-attached evidence.",
+          "If your team is evaluating endpoints or evidence flows right now, we can show you where activation gets stuck and how to fix it fast.",
+          "",
+          "Reply if you want a short walkthrough.",
+        ];
+    return { subject: trimText(subject, 120), body: bodyLines.join("\n") };
+  }
+
+  const offer = latestApprovedOfferArtifact();
+  const subject = offer?.copy?.headline ? `Partnership: ${offer.copy.headline}` : "Partnership opportunity with Veklom";
+  const body = [
+    `Hi ${contact.accountLabel},`,
+    "",
+    "We are building a governed AI operating system and are looking for vendors, affiliates, and integration partners that can expand distribution or service capacity.",
+    "If there is fit, we want a fast qualification conversation around reliability, delivery shape, and economics.",
+    "",
+    offer?.copy?.cta || "Reply if you want to explore a partner path.",
+  ].join("\n");
+  return { subject: trimText(subject, 120), body };
+}
+
+function resendConfigured() {
+  return Boolean(RESEND_API_KEY && RESEND_FROM_EMAIL);
+}
+
+async function sendResendEmail(to: string, subject: string, body: string) {
+  if (!resendConfigured()) {
+    throw new Error("Resend outbound is not configured.");
+  }
+
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${RESEND_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: RESEND_FROM_EMAIL,
+      to: [to],
+      subject,
+      text: body,
+      ...(UACP_OUTBOUND_REPLY_TO ? { reply_to: UACP_OUTBOUND_REPLY_TO } : {}),
+    }),
+    signal: AbortSignal.timeout(20000),
+  });
+
+  const payload = await response.json().catch(() => ({} as Record<string, unknown>));
+  if (!response.ok) {
+    throw new Error(
+      `${response.status} ${response.statusText}${payload && typeof payload === "object" && typeof (payload as Record<string, unknown>).message === "string" ? ` :: ${(payload as Record<string, unknown>).message}` : ""}`,
+    );
+  }
+
+  return {
+    id: typeof payload.id === "string" ? payload.id : undefined,
+  };
+}
+
+function queuedContactsForWorker(workerId: string) {
+  const cooldownCutoff = Date.now() - (72 * 60 * 60 * 1000);
+  return state.outboundContacts
+    .filter((contact) => contact.assignedWorkerId === workerId && contact.status === "queued")
+    .filter((contact) => !contact.lastSentAt || Date.parse(contact.lastSentAt) < cooldownCutoff)
+    .sort((left, right) => new Date(left.updatedAt).getTime() - new Date(right.updatedAt).getTime());
+}
+
+function buildOutboundRuntimeSnapshot(): OutboundRuntimeSnapshot {
+  return {
+    enabled: resendConfigured(),
+    provider: resendConfigured() ? "resend" : "disabled",
+    fromConfigured: Boolean(RESEND_FROM_EMAIL),
+    queuedContacts: state.outboundContacts.filter((contact) => contact.status === "queued").length,
+    sentMessages: state.outboundMessages.filter((message) => message.status === "sent").length,
+    failedMessages: state.outboundMessages.filter((message) => message.status === "failed").length,
+    customerQueue: state.outboundContacts.filter((contact) => contact.status === "queued" && contact.kind === "customer").length,
+    vendorQueue: state.outboundContacts.filter((contact) => contact.status === "queued" && contact.kind === "vendor").length,
+  };
+}
+
+async function executeWorkerOutboundTasks(worker: OperatorWorker, run: OperatorRun) {
+  if (worker.id !== "welcome" && worker.id !== "vendor-recruiter") {
+    return { actions: [] as string[], evidenceCreated: [] as string[], outboundMessageIds: [] as string[] };
+  }
+
+  const contacts = queuedContactsForWorker(worker.id).slice(0, UACP_OUTBOUND_MAX_SENDS_PER_RUN);
+  if (contacts.length === 0) {
+    return { actions: ["no_outbound_contacts_ready"], evidenceCreated: [] as string[], outboundMessageIds: [] as string[] };
+  }
+
+  if (!resendConfigured()) {
+    return {
+      actions: ["outbound_blocked_resend_unconfigured"],
+      evidenceCreated: [] as string[],
+      outboundMessageIds: [] as string[],
+    };
+  }
+
+  const evidenceCreated: string[] = [];
+  const outboundMessageIds: string[] = [];
+  const actions: string[] = [];
+
+  for (const contact of contacts) {
+    const draft = buildOutboundMessageDraft(contact);
+    const messageRecord: OutboundMessage = {
+      id: createId("outmsg"),
+      contactId: contact.id,
+      workerId: worker.id,
+      provider: "resend",
+      subject: draft.subject,
+      body: draft.body,
+      status: "queued",
+      createdAt: now(),
+    };
+    state.outboundMessages = [messageRecord, ...state.outboundMessages];
+    contact.lastAttemptAt = now();
+    contact.attemptCount += 1;
+    contact.updatedAt = now();
+
+    try {
+      const providerResult = await sendResendEmail(contact.email, draft.subject, draft.body);
+      messageRecord.status = "sent";
+      messageRecord.sentAt = now();
+      messageRecord.providerMessageId = providerResult.id;
+      contact.status = "sent";
+      contact.lastSentAt = messageRecord.sentAt;
+      contact.lastMessageId = messageRecord.id;
+      contact.updatedAt = now();
+
+      const archive = addArchive({
+        title: `${worker.displayName} outbound send`,
+        category: "run",
+        summary: `${worker.displayName} sent a governed ${contact.kind} outreach email to ${contact.email}.`,
+        lineage: [run.id, worker.id, contact.id, ...(contact.sourceEventIds || [])],
+        metadata: {
+          workerId: worker.id,
+          contactId: contact.id,
+          outboundKind: contact.kind,
+          email: contact.email,
+          subject: draft.subject,
+          provider: "resend",
+          providerMessageId: providerResult.id,
+        },
+      });
+      messageRecord.archiveRef = archive.id;
+      evidenceCreated.push(archive.id);
+      outboundMessageIds.push(messageRecord.id);
+      actions.push(contact.kind === "vendor" ? "sent_vendor_outreach" : "sent_customer_outreach");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown Resend outbound failure.";
+      messageRecord.status = "failed";
+      messageRecord.error = message;
+      contact.status = "failed";
+      contact.updatedAt = now();
+      actions.push(contact.kind === "vendor" ? "failed_vendor_outreach" : "failed_customer_outreach");
+      throw new Error(message);
+    }
+  }
+
+  return { actions, evidenceCreated, outboundMessageIds };
+}
+
 function getLatestArchiveForEventIds(eventIds: string[]) {
   return state.archives.find((archive) => {
     const lineage = Array.isArray(archive.lineage) ? archive.lineage : [];
@@ -4866,12 +5173,22 @@ function queueCommitteeRegroup(committee: OperatorCommittee) {
     backlog,
   });
 
+  const regroupBase = Date.now();
   for (const workerId of committee.workerIds) {
-    try {
-      queueOperatorRun(workerId, "scheduled", `committee-regroup:${committee.id}:${activeExecutionWindow().id}`);
-    } catch {
-      continue;
-    }
+    const worker = workerById(workerId);
+    if (!worker) continue;
+
+    const hasActiveRun = state.operatorRuns.some((run) => run.workerId === workerId && (run.status === "queued" || run.status === "running"));
+    if (hasActiveRun) continue;
+
+    const runtime = state.workerRuntime.find((entry) => entry.workerId === workerId) || makeWorkerRuntime(worker);
+    if (runtime.paused) continue;
+
+    const offsetMinutes = workerConveyorOffsetMinutes(worker);
+    setWorkerRuntime(workerId, {
+      status: runtime.status === "error" ? "error" : "idle",
+      nextRunAt: isoAfterMinutes(offsetMinutes, regroupBase),
+    });
   }
 }
 
@@ -4935,7 +5252,7 @@ async function executeOperatorRun(runId: string) {
   try {
     const inputs = uniqueStrings([...run.inputs, ...workerInputSnapshot(worker)]);
     const escalations = determineWorkerEscalations(worker, inputs);
-    const actionsTaken = determineWorkerActions(worker, escalations);
+    let actionsTaken = determineWorkerActions(worker, escalations);
     const nextRecommendation = determineWorkerRecommendation(worker, escalations);
     const committee = operatorCommitteeById(worker.committeeId);
 
@@ -4954,6 +5271,10 @@ async function executeOperatorRun(runId: string) {
     });
     broadcast({ type: "operator_run_update", data: run });
 
+    const outboundExecution = await executeWorkerOutboundTasks(worker, run);
+    actionsTaken = uniqueStrings([...actionsTaken, ...outboundExecution.actions]);
+    run.actionsTaken = actionsTaken;
+
     const archive = addArchive({
       title: `${worker.displayName} ${worker.outputArtifact}`,
       category: "run",
@@ -4967,11 +5288,12 @@ async function executeOperatorRun(runId: string) {
         actionsTaken,
         escalations,
         nextRecommendation,
+        outboundMessageIds: outboundExecution.outboundMessageIds,
       },
     });
 
     run.archiveRef = archive.id;
-    run.evidenceCreated = [archive.id];
+    run.evidenceCreated = uniqueStrings([archive.id, ...outboundExecution.evidenceCreated]);
     run.completedAt = now();
     run.status = escalations.length > 0 ? "escalated" : "completed";
     run.nextRecommendation = nextRecommendation;
@@ -5028,9 +5350,10 @@ async function operatorSchedulerTick() {
 
   const dueWorkers = state.workerRuntime
     .filter((runtime) => !runtime.paused && runtime.nextRunAt && new Date(runtime.nextRunAt).getTime() <= Date.now())
+    .sort((left, right) => new Date(left.nextRunAt || 0).getTime() - new Date(right.nextRunAt || 0).getTime())
     .map((runtime) => runtime.workerId);
 
-  for (const workerId of dueWorkers) {
+  for (const workerId of dueWorkers.slice(0, UACP_SCHEDULER_MAX_RELEASE_PER_TICK)) {
     try {
       queueOperatorRun(workerId, "scheduled", "scheduled-heartbeat");
     } catch {
@@ -5072,6 +5395,7 @@ function ingestBackendEvent(candidate: unknown) {
   };
 
   updateBackendSummaryFromEvent(event);
+  queueOutboundContactFromBackendEvent(event);
   const archive = addArchive({
     title: `Backend event ${event.eventType}`,
     category: "research",
@@ -5134,6 +5458,8 @@ async function loadState() {
         : emptyCommercialScorecard(),
       researchSignals: Array.isArray(parsed.researchSignals) ? parsed.researchSignals : [],
       researchStatus: Array.isArray(parsed.researchStatus) ? parsed.researchStatus : [],
+      outboundContacts: Array.isArray(parsed.outboundContacts) ? parsed.outboundContacts : [],
+      outboundMessages: Array.isArray(parsed.outboundMessages) ? parsed.outboundMessages : [],
       stats: {
         planCompileDurationsMs: Array.isArray(parsed.stats?.planCompileDurationsMs) ? parsed.stats?.planCompileDurationsMs : [],
         runDurationsMs: Array.isArray(parsed.stats?.runDurationsMs) ? parsed.stats?.runDurationsMs : [],
@@ -8436,6 +8762,7 @@ async function startServer() {
           internalKeyConfigured: Boolean(INTERNAL_API_KEY),
         },
         rateLimit: rateLimitRuntime.status,
+        outbound: buildOutboundRuntimeSnapshot(),
       },
       registry: {
         version: governanceRegistry.version,
@@ -8481,6 +8808,9 @@ async function startServer() {
   app.get("/api/research-signals", (_req, res) => res.json(state.researchSignals));
   app.get("/api/research-status", (_req, res) => res.json(state.researchStatus));
   app.get("/api/provider-readiness", async (_req, res) => res.json(await getProviderSnapshot()));
+  app.get("/api/outbound/runtime", (_req, res) => res.json(buildOutboundRuntimeSnapshot()));
+  app.get("/api/v1/internal/outbound/contacts", requireInternal, (_req, res) => res.json(state.outboundContacts));
+  app.get("/api/v1/internal/outbound/messages", requireInternal, (_req, res) => res.json(state.outboundMessages));
   app.get("/api/ssrn-signals", (_req, res) => res.json(toEngineSignals(state.researchSignals)));
   app.get("/api/plans", (_req, res) => res.json(state.plans));
   app.get("/api/runs", (_req, res) => res.json(state.runs));

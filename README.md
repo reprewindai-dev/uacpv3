@@ -220,6 +220,8 @@ If no external model provider is ready, the root app still compiles plans with t
 
 `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` enable production rate limiting for public mutation routes through Upstash Redis.
 
+`RESEND_API_KEY`, `RESEND_FROM_EMAIL`, and optional `UACP_OUTBOUND_REPLY_TO` enable governed outbound email sends for worker-backed outreach. The live outbound summary is exposed in `GET /api/outbound/runtime`, and full queue/message inspection is available on the protected internal routes.
+
 `UACP_RATE_LIMIT_TRUST_ACCESS_TIER_HEADER=false` keeps all public callers on the free tier unless you explicitly trust an upstream gateway to set `x-uacp-access-tier` and `x-uacp-user-id`.
 
 Public mutation profiles:
@@ -263,6 +265,10 @@ Optional environment variables:
 - `ALLOW_GEMINI_FALLBACK`
 - `UPSTASH_REDIS_REST_URL`
 - `UPSTASH_REDIS_REST_TOKEN`
+- `RESEND_API_KEY`
+- `RESEND_FROM_EMAIL`
+- `UACP_OUTBOUND_REPLY_TO`
+- `UACP_OUTBOUND_MAX_SENDS_PER_RUN`
 - `UACP_RATE_LIMIT_TRUST_ACCESS_TIER_HEADER`
 - `UACP_RATE_LIMIT_PUBLIC_FREE_LIMIT`
 - `UACP_RATE_LIMIT_PUBLIC_PAID_LIMIT`
@@ -305,8 +311,11 @@ Health and verification endpoints:
 
 - `GET /api/health`
 - `GET /api/bootstrap`
+- `GET /api/outbound/runtime`
 - `GET /api/v1/internal/operators` with header `x-uacp-internal-key: $UACP_INTERNAL_API_KEY`
 - `GET /api/v1/internal/operators/runs` with header `x-uacp-internal-key: $UACP_INTERNAL_API_KEY`
+- `GET /api/v1/internal/outbound/contacts` with header `x-uacp-internal-key: $UACP_INTERNAL_API_KEY`
+- `GET /api/v1/internal/outbound/messages` with header `x-uacp-internal-key: $UACP_INTERNAL_API_KEY`
 
 If `UACP_INTERNAL_API_KEY` is unset, the internal operator endpoints remain intentionally disabled.
 

@@ -14,6 +14,9 @@ export type WorkerRuntimeStatus = "idle" | "running" | "paused" | "error";
 export type BackendEventSeverity = "info" | "warning" | "critical";
 export type ModelProviderId = "groq" | "huggingface" | "ollama" | "gemini" | "deterministic";
 export type ModelProviderHealth = "ready" | "degraded" | "missing" | "disabled";
+export type OutboundContactKind = "customer" | "vendor";
+export type OutboundContactStatus = "queued" | "sent" | "failed" | "suppressed";
+export type OutboundMessageStatus = "queued" | "sent" | "failed";
 
 export interface PlanNode {
   id: string;
@@ -394,6 +397,52 @@ export interface OperatorRun {
   escalations: string[];
   errors: string[];
   nextRecommendation: string;
+}
+
+export interface OutboundContact {
+  id: string;
+  kind: OutboundContactKind;
+  email: string;
+  accountLabel: string;
+  company?: string;
+  workspaceId?: string;
+  sourceEventIds: string[];
+  assignedWorkerId: string;
+  status: OutboundContactStatus;
+  createdAt: string;
+  updatedAt: string;
+  lastActivityAt?: string;
+  lastAttemptAt?: string;
+  lastSentAt?: string;
+  lastMessageId?: string;
+  attemptCount: number;
+  metadata?: Record<string, unknown>;
+}
+
+export interface OutboundMessage {
+  id: string;
+  contactId: string;
+  workerId: string;
+  provider: "resend";
+  subject: string;
+  body: string;
+  status: OutboundMessageStatus;
+  createdAt: string;
+  sentAt?: string;
+  providerMessageId?: string;
+  error?: string;
+  archiveRef?: string;
+}
+
+export interface OutboundRuntimeSnapshot {
+  enabled: boolean;
+  provider: "resend" | "disabled";
+  fromConfigured: boolean;
+  queuedContacts: number;
+  sentMessages: number;
+  failedMessages: number;
+  customerQueue: number;
+  vendorQueue: number;
 }
 
 export interface OperatorCommitteeRuntimeView {

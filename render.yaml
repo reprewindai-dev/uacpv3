@@ -50,5 +50,13 @@ services:
         sync: false
       - key: UACP_BACKEND_TIMEOUT_MS
         value: "8000"
+      - key: RESEND_API_KEY
+        sync: false
+      - key: RESEND_FROM_EMAIL
+        sync: false
+      - key: UACP_OUTBOUND_REPLY_TO
+        sync: false
+      - key: UACP_OUTBOUND_MAX_SENDS_PER_RUN
+        value: "2"
       - key: DEFAULT_RESEARCH_QUERY
         value: ai governance orchestration workflow observability api mcp deployment compliance
