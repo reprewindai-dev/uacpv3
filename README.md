@@ -295,6 +295,10 @@ It will connect to the Box, ensure the pillar-council init command, resume or re
 - `GET /api/v1/internal/operators`
 - `GET /api/v1/internal/operators/runs`
 
+For the full access and recovery procedure, including SSH sign-in, the canonical Box name, the live host id, and the stale-runtime replacement path, use:
+
+- [docs/UPSTASH-BOX-OPERATIONS.md](C:/Users/antho/Documents/Codex/2026-05-08/system-uacp-v3-control-plane-you/docs/UPSTASH-BOX-OPERATIONS.md)
+
 Do not point the V3 Render service at `source-uacpgemini` unless you explicitly want to deploy V2 instead.
 
 ## Doctrine

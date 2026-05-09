@@ -264,10 +264,28 @@ async function writeRuntimeDotEnv() {
     UACP_ARCHIVE_WRITE_REQUIRED: process.env.UACP_ARCHIVE_WRITE_REQUIRED || "true",
   };
 
-  if (process.env.GEMINI_API_KEY) runtimeEnv.GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-  if (process.env.UACP_ADMIN_KEY) runtimeEnv.UACP_ADMIN_KEY = process.env.UACP_ADMIN_KEY;
-  if (process.env.DEFAULT_RESEARCH_QUERY) runtimeEnv.DEFAULT_RESEARCH_QUERY = process.env.DEFAULT_RESEARCH_QUERY;
-  if (process.env.DATA_DIR) runtimeEnv.DATA_DIR = process.env.DATA_DIR;
+  for (const key of [
+    "GEMINI_API_KEY",
+    "GEMINI_MODEL",
+    "GROQ_API_KEY",
+    "GROQ_BASE_URL",
+    "GROQ_MODEL",
+    "HF_TOKEN",
+    "HF_MODEL",
+    "OLLAMA_BASE_URL",
+    "OLLAMA_MODEL",
+    "UACP_MODEL_PROVIDER",
+    "UACP_MODEL_PROVIDER_ORDER",
+    "UACP_ENABLE_GEMINI_PRIMARY",
+    "ALLOW_GEMINI_FALLBACK",
+    "UACP_ADMIN_KEY",
+    "DEFAULT_RESEARCH_QUERY",
+    "DATA_DIR",
+  ]) {
+    if (process.env[key]) {
+      runtimeEnv[key] = process.env[key];
+    }
+  }
 
   const content = Object.entries(runtimeEnv)
     .map(([key, value]) => `${key}=${JSON.stringify(value)}`)
