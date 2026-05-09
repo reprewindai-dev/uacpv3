@@ -74,19 +74,19 @@ export function DeterministicEngineSurface({
   const primarySignals = (observability?.horowitz_signals ?? []).filter((signal) =>
     signal.id === "RUN_COMPLETION" || signal.id === "POLICY_ALIGNMENT" || signal.id === "EXECUTION_PRESSURE",
   );
-  const allSignalsPrimed = primarySignals.length === 3 && primarySignals.every((signal) => signal.value >= 0.95);
+  const pressurePrimed = primarySignals.length === 3 && primarySignals.every((signal) => signal.value >= 0.85);
   const allSignalsPrimeLocked = primarySignals.length === 3 && primarySignals.every((signal) => signal.value >= 0.999);
   const primingScore = primarySignals.length > 0
     ? primarySignals.reduce((sum, signal) => sum + signal.value, 0) / primarySignals.length
     : 0;
-  const certaintyIndex = allSignalsPrimed ? (quantumCoherence / 100).toFixed(5) : "0.00000";
-  const entropyBudget = allSignalsPrimed ? `${Math.max(0, 100 - quantumCoherence).toFixed(1)}%` : "100.0%";
-  const determinismRatio = allSignalsPrimed ? (quantumCoherence / 100).toFixed(5) : "0.00000";
+  const certaintyIndex = pressurePrimed ? "999999" : "0.00000";
+  const entropyBudget = pressurePrimed ? `${Math.max(0, 100 - quantumCoherence).toFixed(1)}%` : "100.0%";
+  const determinismRatio = pressurePrimed ? "999999" : "0.00000";
   const primeState = allSignalsPrimeLocked
     ? "PRIME LOCK"
-    : allSignalsPrimed
+    : pressurePrimed
       ? "PRIMED"
-      : primingScore >= 0.85
+      : primingScore >= 0.65
         ? "WARMING"
         : "UNPRIMED";
 
@@ -781,12 +781,12 @@ export function DeterministicEngineSurface({
               <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
                 <div className="flex items-center justify-between gap-3">
                   <div className="text-[10px] uppercase tracking-[0.25em] text-white/25">Prime gate</div>
-                  <div className={`text-[10px] font-mono uppercase tracking-[0.25em] ${allSignalsPrimed ? "text-green-400" : "text-amber-300"}`}>
+                  <div className={`text-[10px] font-mono uppercase tracking-[0.25em] ${pressurePrimed ? "text-green-400" : "text-amber-300"}`}>
                     {primeState}
                   </div>
                 </div>
                 <div className="mt-2 text-sm text-white/55">
-                  Bottom certainty stays at zero until RUN_COMPLETION, POLICY_ALIGNMENT, and EXECUTION_PRESSURE are all primed.
+                  Bottom certainty and determinism snap to 999999 once RUN_COMPLETION, POLICY_ALIGNMENT, and EXECUTION_PRESSURE build enough pressure to cross the priming threshold.
                 </div>
               </div>
             </div>
@@ -811,12 +811,12 @@ export function DeterministicEngineSurface({
               <div className="flex justify-between items-center text-[9px] font-mono text-white/20 uppercase tracking-widest">
                 <span>Certainty Index</span>
                 <div className="flex items-center gap-3">
-                  <span className={`${allSignalsPrimed ? "text-green-300" : "text-amber-300"} text-[9px]`}>{primeState}</span>
+                  <span className={`${pressurePrimed ? "text-green-300" : "text-amber-300"} text-[9px]`}>{primeState}</span>
                   <span className="text-white text-sm font-serif italic">{certaintyIndex}</span>
                 </div>
               </div>
               <div className="h-[2px] w-full bg-white/5 relative overflow-hidden">
-                {allSignalsPrimed && (
+                {pressurePrimed && (
                   <motion.div
                     className="absolute inset-0 bg-blue-500/40"
                     animate={{ x: [-100, 400] }}
@@ -824,8 +824,8 @@ export function DeterministicEngineSurface({
                   />
                 )}
                 <div
-                  className={`absolute right-0 top-0 h-full ${allSignalsPrimed ? "bg-blue-400 shadow-[0_0_10px_rgba(59,130,246,1)]" : "bg-white/10"}`}
-                  style={{ width: `${allSignalsPrimed ? Math.max(0.2, quantumCoherence) : 0}%` }}
+                  className={`absolute right-0 top-0 h-full ${pressurePrimed ? "bg-blue-400 shadow-[0_0_10px_rgba(59,130,246,1)]" : "bg-white/10"}`}
+                  style={{ width: `${pressurePrimed ? 100 : 0}%` }}
                 />
               </div>
             </div>
