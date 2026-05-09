@@ -276,6 +276,25 @@ Health and verification endpoints:
 
 If `UACP_INTERNAL_API_KEY` is unset, the internal operator endpoints remain intentionally disabled.
 
+If you want to drive the Box from your local machine with the Upstash Box SDK, use:
+
+```bash
+npm run box:setup
+```
+
+That script reads:
+
+- `UPSTASH_BOX_API_KEY`
+- `UPSTASH_BOX_ID` or `UPSTASH_BOX_NAME`
+- `UACP_INTERNAL_API_KEY`
+
+It will connect to the Box, ensure the pillar-council init command, resume or restart the Box when needed, and verify:
+
+- `GET /api/health`
+- `GET /api/bootstrap`
+- `GET /api/v1/internal/operators`
+- `GET /api/v1/internal/operators/runs`
+
 Do not point the V3 Render service at `source-uacpgemini` unless you explicitly want to deploy V2 instead.
 
 ## Doctrine

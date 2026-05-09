@@ -8,6 +8,7 @@
     "build": "node ./node_modules/vite/bin/vite.js build",
     "start": "node ./node_modules/tsx/dist/cli.mjs server.ts",
     "worker:pillar-council": "node ./node_modules/tsx/dist/cli.mjs src/workers/pillar-council.ts",
+    "box:setup": "node scripts/setup-upstash-box.mjs",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "lint": "node ./node_modules/typescript/bin/tsc --noEmit"
   },
@@ -16,6 +17,7 @@
     "@tailwindcss/vite": "^4.1.14",
     "@types/cors": "^2.8.19",
     "@types/ws": "^8.18.1",
+    "@upstash/box": "^0.4.0",
     "@vitejs/plugin-react": "^5.0.4",
     "cors": "^2.8.6",
     "dotenv": "^17.2.3",
