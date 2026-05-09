@@ -7,6 +7,7 @@
     "dev": "node ./node_modules/tsx/dist/cli.mjs server.ts",
     "build": "node ./node_modules/vite/bin/vite.js build",
     "start": "node ./node_modules/tsx/dist/cli.mjs server.ts",
+    "worker:pillar-council": "node ./node_modules/tsx/dist/cli.mjs src/workers/pillar-council.ts",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "lint": "node ./node_modules/typescript/bin/tsc --noEmit"
   },

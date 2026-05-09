@@ -55,6 +55,10 @@ const REGISTRY_FILE = path.join(DATA_DIR, "governance-registry.json");
 const CONTROL_PLANE_BOOTED_AT = Date.now();
 const ADMIN_API_KEY = process.env.UACP_ADMIN_KEY || "";
 const INTERNAL_API_KEY = process.env.UACP_INTERNAL_API_KEY || ADMIN_API_KEY;
+const BOX_NAME = process.env.UACP_BOX_NAME || TOOL_NAME;
+const RUNTIME_MODE = process.env.UACP_RUNTIME_MODE || "control_plane";
+const WORKER_GROUP = process.env.UACP_WORKER_GROUP || "control_plane";
+const ARCHIVE_WRITE_REQUIRED = /^(1|true|yes|on)$/i.test(process.env.UACP_ARCHIVE_WRITE_REQUIRED || "");
 const GROQ_BASE_URL = (process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1").replace(/\/+$/, "");
 const GROQ_API_KEY = process.env.GROQ_API_KEY || "";
 const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
@@ -876,6 +880,27 @@ function activeWorkers() {
 
 function minimumLiveWorkerIds() {
   return governanceRegistry.minimumLiveWorkerIds;
+}
+
+function logStartupContext(providerSnapshot: ModelProviderSnapshot) {
+  const providerStatuses = providerSnapshot.statuses
+    .map((status) => `${status.id}:${status.health}${status.active ? "*" : ""}`)
+    .join(", ");
+
+  console.log("[uacp] UACP V3 control plane starting");
+  console.log(`[uacp] box name: ${BOX_NAME}`);
+  console.log(`[uacp] runtime mode: ${RUNTIME_MODE}`);
+  console.log(
+    `[uacp] registry loaded: version=${governanceRegistry.version} pillars=${governanceRegistry.pillars.length} committees=${governanceRegistry.committees.length} operatorCommittees=${governanceRegistry.operatorCommittees.length} workers=${governanceRegistry.workers.length}`,
+  );
+  console.log(
+    `[uacp] minimum live workers loaded: count=${minimumLiveWorkerIds().length} ids=${minimumLiveWorkerIds().join(",") || "none"}`,
+  );
+  console.log("[uacp] operator scheduler enabled: true");
+  console.log(`[uacp] archive/data dir: ${DATA_DIR}`);
+  console.log(
+    `[uacp] provider readiness: default=${providerSnapshot.defaultProvider} active=${providerSnapshot.activeProvider} statuses=${providerStatuses} internalApi=${INTERNAL_API_KEY ? "ready" : "disabled"} adminApi=${ADMIN_API_KEY ? "ready" : "disabled"} archiveWrite=${ARCHIVE_WRITE_REQUIRED ? "required" : "optional"} workerGroup=${WORKER_GROUP}`,
+  );
 }
 
 function workerById(workerId: string) {
@@ -4379,6 +4404,7 @@ async function startServer() {
   await loadState();
   await recordGovernanceRegistrySync("startup");
   const providerSnapshot = await getProviderSnapshot(true);
+  logStartupContext(providerSnapshot);
   if (state.stats.determinismHistory.length === 0) {
     captureMetricHistory();
     await persistState();
@@ -4422,6 +4448,34 @@ async function startServer() {
       userEmail: process.env.USER_EMAIL || "FOUNDER",
     };
     res.json(payload);
+  });
+
+  app.get("/api/health", async (_req, res) => {
+    res.json({
+      ok: true,
+      system: "UACP V3",
+      runtime: {
+        boxName: BOX_NAME,
+        mode: RUNTIME_MODE,
+        workerGroup: WORKER_GROUP,
+        archiveWriteRequired: ARCHIVE_WRITE_REQUIRED,
+        schedulerEnabled: true,
+        dataDir: DATA_DIR,
+      },
+      registry: {
+        version: governanceRegistry.version,
+        updatedAt: governanceRegistry.updatedAt,
+        workerCount: activeWorkers().length,
+        minimumLiveWorkerCount: minimumLiveWorkerIds().length,
+      },
+      providers: await getProviderSnapshot(),
+      verification: {
+        bootstrap: "/api/bootstrap",
+        operators: "/api/v1/internal/operators",
+        operatorRuns: "/api/v1/internal/operators/runs",
+        internalAuthRequired: Boolean(INTERNAL_API_KEY),
+      },
+    });
   });
 
   app.get("/api/governance-registry", (_req, res) => res.json(governanceRegistry));

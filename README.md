@@ -65,6 +65,7 @@ The root app does not use seeded plans, hardcoded research cards, or artificial 
 ## API
 
 - `GET /api/bootstrap`
+- `GET /api/health`
 - `GET /api/governance-registry`
 - `GET /api/pillars`
 - `GET /api/committees`
@@ -179,6 +180,10 @@ DEFAULT_RESEARCH_QUERY=ai governance orchestration workflow observability api mc
 DATA_DIR=./data
 UACP_ADMIN_KEY=
 UACP_INTERNAL_API_KEY=
+UACP_BOX_NAME=uacp-pillar-council
+UACP_RUNTIME_MODE=pillar_council
+UACP_WORKER_GROUP=pillar_council
+UACP_ARCHIVE_WRITE_REQUIRED=true
 ```
 
 V3 now supports four model providers:
@@ -195,6 +200,10 @@ If no external model provider is ready, the root app still compiles plans with t
 `UACP_ADMIN_KEY` enables governed registry updates.
 
 `UACP_INTERNAL_API_KEY` secures backend-event ingestion and operator mutation endpoints. If it is unset, internal mutation routes are disabled.
+
+`UACP_BOX_NAME`, `UACP_RUNTIME_MODE`, and `UACP_WORKER_GROUP` give a Box or worker runtime a clean identity without changing the full server behavior.
+
+`UACP_ARCHIVE_WRITE_REQUIRED=true` marks this runtime as archive-writing infrastructure. The server logs that requirement at startup but does not print secrets.
 
 ## Render deployment
 
@@ -231,6 +240,41 @@ Optional environment variables:
 - `UACP_INTERNAL_API_KEY`
 - `DEFAULT_RESEARCH_QUERY`
 - `DATA_DIR`
+
+## Upstash Box runtime
+
+For the first multi-worker runtime gateway Box, use the dedicated pillar-council entrypoint:
+
+```bash
+cd /workspace/home/uacpv3 && npm install && npm run build && npm run worker:pillar-council
+```
+
+This keeps the existing V3 UI/API/WebSocket/control-plane behavior, but boots it with Box identity defaults:
+
+- `UACP_BOX_NAME=uacp-pillar-council`
+- `UACP_RUNTIME_MODE=pillar_council`
+- `UACP_WORKER_GROUP=pillar_council`
+- `UACP_ARCHIVE_WRITE_REQUIRED=true`
+
+The runtime logs:
+
+- control plane startup
+- box name
+- runtime mode
+- registry load summary
+- minimum-live workers
+- operator scheduler status
+- archive/data directory
+- provider readiness without printing secrets
+
+Health and verification endpoints:
+
+- `GET /api/health`
+- `GET /api/bootstrap`
+- `GET /api/v1/internal/operators` with header `x-uacp-internal-key: $UACP_INTERNAL_API_KEY`
+- `GET /api/v1/internal/operators/runs` with header `x-uacp-internal-key: $UACP_INTERNAL_API_KEY`
+
+If `UACP_INTERNAL_API_KEY` is unset, the internal operator endpoints remain intentionally disabled.
 
 Do not point the V3 Render service at `source-uacpgemini` unless you explicitly want to deploy V2 instead.
 
