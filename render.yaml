@@ -10,5 +10,15 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: USER_EMAIL
+        value: founder@company.com
+      - key: CONTACT_EMAIL
+        value: founder@company.com
       - key: GEMINI_API_KEY
         sync: false
+      - key: UACP_ADMIN_KEY
+        sync: false
+      - key: UACP_INTERNAL_API_KEY
+        sync: false
+      - key: DEFAULT_RESEARCH_QUERY
+        value: governance agents orchestration workflow committees skills institutional control plane

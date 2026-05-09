@@ -42,7 +42,7 @@ UACP V1 / Quantum UACP v0 established:
 - Event log sequencing
 - Gopher policy evaluation
 - Horowitz observability signals
-- Mock hybrid quantum/classical workloads
+- Early hybrid quantum/classical workload experiments
 - Doctrine:
   - Plans are promises, not prompts.
   - Plan governance is distinct from run execution.
