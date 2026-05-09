@@ -59,6 +59,16 @@ export function DeterministicEngineSurface({
 }: DeterministicEngineSurfaceProps) {
   const [activeTab, setActiveTab] = useState<EngineTab>("intent");
   const primaryPlan = plans[0];
+  const primaryPlanPillars = asArray(primaryPlan?.pillars);
+  const primaryPlanCommitteeIds = asArray(primaryPlan?.committeeIds);
+  const primaryPlanWorkflowIds = asArray(primaryPlan?.workflowIds);
+  const primaryPlanSkillIds = asArray(primaryPlan?.skillIds);
+  const primaryPlanEscalationRuleIds = asArray(primaryPlan?.escalationRuleIds);
+  const primaryPlanGuardrails = asArray(primaryPlan?.guardrails);
+  const primaryPlanSuccessMetrics = asArray(primaryPlan?.successMetrics);
+  const primaryPlanVotes = asArray(primaryPlan?.votes);
+  const primaryPlanResearchReferences = asArray(primaryPlan?.researchReferences);
+  const primaryPlanProposals = asArray(primaryPlan?.proposals);
   const gopherAlignment = observability?.gopher_policy_alignment ?? 0;
   const quantumCoherence = observability?.quantum_coherence ?? 0;
   const certaintyIndex = (quantumCoherence / 100).toFixed(5);
@@ -74,7 +84,7 @@ export function DeterministicEngineSurface({
 
   const mappedNodes = useMemo(
     () =>
-      (primaryPlan?.graph.nodes ?? []).map((node, index) => ({
+      asArray(primaryPlan?.graph?.nodes).map((node, index) => ({
         id: node.id,
         title: node.label,
         description: node.summary,
@@ -328,10 +338,10 @@ export function DeterministicEngineSurface({
                             "{primaryPlan.intent}" - {primaryPlan.objective}
                           </p>
                           <div className="mt-4 grid grid-cols-2 gap-3 text-[10px] font-mono uppercase tracking-[0.2em] text-white/35">
-                            <div>Paying user: <span className="text-white/70 normal-case tracking-normal">{primaryPlan.payingUser}</span></div>
-                            <div>Pricing: <span className="text-white/70 normal-case tracking-normal">{primaryPlan.pricingModel}</span></div>
-                            <div>Risk tier: <span className="text-white/70 normal-case tracking-normal">{primaryPlan.riskTier}</span></div>
-                            <div>Votes: <span className="text-white/70 normal-case tracking-normal">{primaryPlan.votes.length}</span></div>
+                            <div>Paying user: <span className="text-white/70 normal-case tracking-normal">{primaryPlan.payingUser || "Unknown"}</span></div>
+                            <div>Pricing: <span className="text-white/70 normal-case tracking-normal">{primaryPlan.pricingModel || "Unknown"}</span></div>
+                            <div>Risk tier: <span className="text-white/70 normal-case tracking-normal">{primaryPlan.riskTier || "unknown"}</span></div>
+                            <div>Votes: <span className="text-white/70 normal-case tracking-normal">{primaryPlanVotes.length}</span></div>
                           </div>
                         </div>
                       </div>
@@ -339,25 +349,25 @@ export function DeterministicEngineSurface({
 
                     <div className="grid grid-cols-1 gap-4 xl:grid-cols-[0.9fr_1.1fr] mb-10">
                       <InfoPanel title="Pillars">
-                        <PillList items={primaryPlan.pillars} />
+                        <PillList items={primaryPlanPillars} />
                       </InfoPanel>
                       <InfoPanel title="Committees">
-                        <PillList items={primaryPlan.committeeIds.map((committeeId) => resolveCommittee(committeeId, committees))} />
+                        <PillList items={primaryPlanCommitteeIds.map((committeeId) => resolveCommittee(committeeId, committees))} />
                       </InfoPanel>
                       <InfoPanel title="Workflows">
-                        <PillList items={primaryPlan.workflowIds} />
+                        <PillList items={primaryPlanWorkflowIds} />
                       </InfoPanel>
                       <InfoPanel title="Skills">
-                        <PillList items={primaryPlan.skillIds} />
+                        <PillList items={primaryPlanSkillIds} />
                       </InfoPanel>
                       <InfoPanel title="Escalation Rules">
-                        <PillList items={primaryPlan.escalationRuleIds} />
+                        <PillList items={primaryPlanEscalationRuleIds} />
                       </InfoPanel>
                       <InfoPanel title="Guardrails">
-                        <TextList items={primaryPlan.guardrails} />
+                        <TextList items={primaryPlanGuardrails} />
                       </InfoPanel>
                       <InfoPanel title="Success Metrics">
-                        <TextList items={primaryPlan.successMetrics} />
+                        <TextList items={primaryPlanSuccessMetrics} />
                       </InfoPanel>
                       <InfoPanel title="Research Query">
                         <div className="text-xs text-white/70 leading-relaxed">
@@ -365,15 +375,15 @@ export function DeterministicEngineSurface({
                         </div>
                       </InfoPanel>
                       <InfoPanel title="Live References">
-                        {primaryPlan.researchReferences && primaryPlan.researchReferences.length > 0 ? (
-                          <ReferenceList references={primaryPlan.researchReferences} />
+                        {primaryPlanResearchReferences.length > 0 ? (
+                          <ReferenceList references={primaryPlanResearchReferences} />
                         ) : (
                           <div className="text-xs text-white/45 italic">No live references attached to this plan.</div>
                         )}
                       </InfoPanel>
                       <InfoPanel title="Registry Proposals">
-                        {primaryPlan.proposals && primaryPlan.proposals.length > 0 ? (
-                          <ProposalList proposals={primaryPlan.proposals} />
+                        {primaryPlanProposals.length > 0 ? (
+                          <ProposalList proposals={primaryPlanProposals} />
                         ) : (
                           <div className="text-xs text-white/45 italic">No new governance objects were proposed.</div>
                         )}
@@ -448,7 +458,7 @@ export function DeterministicEngineSurface({
                         <span className="text-[10px] uppercase tracking-[0.3em] text-white/20 font-bold">Committee Votes</span>
                       </div>
                       <div className="space-y-3">
-                        {primaryPlan.votes.map((vote) => (
+                        {primaryPlanVotes.map((vote) => (
                           <div key={`${vote.member}-${vote.model}`} className="glass-panel p-4 rounded-lg">
                             <div className="flex items-center justify-between gap-3">
                               <div className="text-white text-sm">{vote.member}</div>
@@ -462,6 +472,11 @@ export function DeterministicEngineSurface({
                             <div className="mt-3 text-xs text-white/55 italic">{vote.rationale}</div>
                           </div>
                         ))}
+                        {primaryPlanVotes.length === 0 && (
+                          <div className="glass-panel p-4 rounded-lg text-xs text-white/45 italic">
+                            No committee votes are recorded for this plan revision.
+                          </div>
+                        )}
                       </div>
                     </div>
                   </>
@@ -968,6 +983,10 @@ function TextList({ items }: { items: string[] }) {
       ))}
     </div>
   );
+}
+
+function asArray<T>(value: T[] | null | undefined) {
+  return Array.isArray(value) ? value : [];
 }
 
 function resolveCommittee(id: string, committees: Committee[]) {
