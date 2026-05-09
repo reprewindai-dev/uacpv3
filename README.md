@@ -184,6 +184,8 @@ UACP_BOX_NAME=uacp-pillar-council
 UACP_RUNTIME_MODE=pillar_council
 UACP_WORKER_GROUP=pillar_council
 UACP_ARCHIVE_WRITE_REQUIRED=true
+UACP_BACKEND_BASE_URL=
+UACP_BACKEND_TIMEOUT_MS=8000
 UPSTASH_REDIS_REST_URL=
 UPSTASH_REDIS_REST_TOKEN=
 UACP_RATE_LIMIT_TRUST_ACCESS_TIER_HEADER=false
@@ -213,6 +215,8 @@ If no external model provider is ready, the root app still compiles plans with t
 `UACP_BOX_NAME`, `UACP_RUNTIME_MODE`, and `UACP_WORKER_GROUP` give a Box or worker runtime a clean identity without changing the full server behavior.
 
 `UACP_ARCHIVE_WRITE_REQUIRED=true` marks this runtime as archive-writing infrastructure. The server logs that requirement at startup but does not print secrets.
+
+`UACP_BACKEND_BASE_URL` points the V3 control plane at the protected backend-truth service so `/api/sunnyvale-internal` can populate Evaluation Surgeon and Hub Growth Navigator from real backend queues using `UACP_INTERNAL_API_KEY`.
 
 `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` enable production rate limiting for public mutation routes through Upstash Redis.
 

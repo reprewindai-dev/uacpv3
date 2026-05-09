@@ -46,5 +46,9 @@ services:
         sync: false
       - key: UACP_INTERNAL_API_KEY
         sync: false
+      - key: UACP_BACKEND_BASE_URL
+        sync: false
+      - key: UACP_BACKEND_TIMEOUT_MS
+        value: "8000"
       - key: DEFAULT_RESEARCH_QUERY
         value: ai governance orchestration workflow observability api mcp deployment compliance

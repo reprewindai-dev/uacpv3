@@ -47,6 +47,7 @@ import type {
   RunStageRecord,
   SkillArtifact,
   SunnyvaleInternalSnapshot,
+  SunnyvaleOverview,
   SurfaceId,
   WorkerRuntimeState,
   WorkflowArtifact,
@@ -91,6 +92,8 @@ const BOX_NAME = process.env.UACP_BOX_NAME || TOOL_NAME;
 const RUNTIME_MODE = process.env.UACP_RUNTIME_MODE || "control_plane";
 const WORKER_GROUP = process.env.UACP_WORKER_GROUP || "control_plane";
 const ARCHIVE_WRITE_REQUIRED = /^(1|true|yes|on)$/i.test(process.env.UACP_ARCHIVE_WRITE_REQUIRED || "");
+const UACP_BACKEND_BASE_URL = String(process.env.UACP_BACKEND_BASE_URL || process.env.UACP_BACKEND_URL || "").trim().replace(/\/+$/, "");
+const UACP_BACKEND_TIMEOUT_MS = Math.max(2000, Number(process.env.UACP_BACKEND_TIMEOUT_MS || 8000) || 8000);
 const UPSTASH_REDIS_REST_URL = process.env.UPSTASH_REDIS_REST_URL || "";
 const UPSTASH_REDIS_REST_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || "";
 const RATE_LIMIT_TRUST_ACCESS_TIER_HEADER = /^(1|true|yes|on)$/i.test(
@@ -214,6 +217,10 @@ type RateLimitStatus = {
 type ChatMessage = {
   role: "system" | "user" | "assistant";
   content: string;
+};
+
+type RemoteSunnyvaleSummaryEnvelope = Record<string, unknown> & {
+  sunnyvale?: Record<string, unknown>;
 };
 
 type ProviderTextResponse = {
@@ -2714,6 +2721,31 @@ async function fetchJson<T>(url: string) {
   return response.json() as Promise<T>;
 }
 
+async function fetchInternalBackendJson<T>(pathname: string) {
+  if (!UACP_BACKEND_BASE_URL) {
+    throw new Error("UACP_BACKEND_BASE_URL is not configured.");
+  }
+  if (!INTERNAL_API_KEY) {
+    throw new Error("UACP_INTERNAL_API_KEY is not configured.");
+  }
+
+  const normalizedPath = pathname.startsWith("/") ? pathname : `/${pathname}`;
+  const response = await fetch(`${UACP_BACKEND_BASE_URL}${normalizedPath}`, {
+    headers: {
+      "User-Agent": `${TOOL_NAME} (${CONTACT_EMAIL})`,
+      "x-uacp-internal-key": INTERNAL_API_KEY,
+    },
+    signal: AbortSignal.timeout(UACP_BACKEND_TIMEOUT_MS),
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`${response.status} ${response.statusText}${body ? ` :: ${trimText(body, 220)}` : ""}`);
+  }
+
+  return response.json() as Promise<T>;
+}
+
 async function fetchProviderJson<T>(url: string, init: RequestInit, timeoutMs = 20000) {
   const response = await fetch(url, {
     ...init,
@@ -3740,6 +3772,59 @@ function getPayloadNumber(payload: Record<string, unknown>, keys: string[]) {
   return undefined;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  return value as Record<string, unknown>;
+}
+
+function getRecordString(record: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "string" && value.trim().length > 0) return value.trim();
+  }
+  return undefined;
+}
+
+function getRecordNumber(record: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const parsed = Number(record[key]);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function getRecordStringArray(record: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = record[key];
+    if (Array.isArray(value)) {
+      return value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).map((entry) => entry.trim());
+    }
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.split(/[,\n]+/).map((entry) => entry.trim()).filter(Boolean);
+    }
+  }
+  return [];
+}
+
+function extractQueueRecords(value: unknown, preferredKey?: string) {
+  if (Array.isArray(value)) {
+    return value.map(asRecord).filter((entry): entry is Record<string, unknown> => Boolean(entry));
+  }
+
+  const record = asRecord(value);
+  if (!record) return [] as Record<string, unknown>[];
+
+  const candidateKeys = preferredKey ? [preferredKey, "queue", "items", "results", "data"] : ["queue", "items", "results", "data"];
+  for (const key of candidateKeys) {
+    const nested = record[key];
+    if (Array.isArray(nested)) {
+      return nested.map(asRecord).filter((entry): entry is Record<string, unknown> => Boolean(entry));
+    }
+  }
+
+  return [];
+}
+
 function classifyBackendEvent(input: {
   eventType: string;
   entityType: string;
@@ -4376,7 +4461,174 @@ function buildFieldIntelligenceSignals(evaluationSignals: OperatingSignal[]): Op
   return intelligence.sort((left, right) => (right.score + right.riskScore) - (left.score + left.riskScore));
 }
 
-function buildSunnyvaleInternalSnapshot(): SunnyvaleInternalSnapshot {
+function defaultWorkerIdsForSignal(kind: OperatingSignal["kind"]) {
+  switch (kind) {
+    case "evaluation":
+      return ["gauge", "welcome", "ledger"];
+    case "growth":
+      return ["harvest", "scout", "signal"];
+    case "field-intelligence":
+      return ["signal", "ledger", "gauge"];
+    default:
+      return ["gauge"];
+  }
+}
+
+function normalizeSignalStatus(
+  value: unknown,
+  score: number,
+  riskScore: number,
+): OperatingSignal["status"] {
+  if (value === "ready" || value === "watch" || value === "open" || value === "escalated") {
+    return value;
+  }
+
+  if (riskScore >= 70) return "escalated";
+  if (score >= 75) return "ready";
+  if (riskScore >= 45 || score >= 55) return "watch";
+  return "open";
+}
+
+function normalizeConfidence(value: unknown, fallback = 0.65) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return clamp(fallback, 0.2, 0.99);
+  const normalized = parsed > 1 ? parsed / 100 : parsed;
+  return clamp(normalized, 0.2, 0.99);
+}
+
+function signalSlug(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+}
+
+function normalizeRemoteSunnyvaleSignal(
+  record: Record<string, unknown>,
+  kind: OperatingSignal["kind"],
+  index: number,
+): OperatingSignal {
+  const accountLabel =
+    getRecordString(record, ["account_label", "workspace_name", "account_name", "customer_name", "org", "organization", "workspace_id"]) ||
+    `${kind}-${index + 1}`;
+  const title =
+    getRecordString(record, ["title", "name", "opportunity_title", "headline"]) ||
+    (kind === "evaluation" ? `${accountLabel} evaluation signal` : `${accountLabel} ${kind} signal`);
+  const workspaceId = getRecordString(record, ["workspace_id", "workspaceId", "tenant_id", "tenantId", "account_id"]);
+  const score = clamp(
+    Math.round(
+      getRecordNumber(record, ["score", "activation_score", "opportunity_score", "priority", "rank_score", "priority_score"]) ??
+      (normalizeConfidence(record.confidence ?? record.confidence_score, 0.65) * 100),
+    ),
+    0,
+    99,
+  );
+  const riskScore = clamp(
+    Math.round(
+      getRecordNumber(record, ["risk_score", "risk", "riskScore", "severity_score", "severity"]) ??
+      (kind === "evaluation" ? score * 0.55 : score * 0.4),
+    ),
+    0,
+    100,
+  );
+  const assignedWorkerIds = uniqueStrings(
+    getRecordStringArray(record, ["assigned_worker_ids", "worker_ids", "workers", "assignedWorkers"]).concat(defaultWorkerIdsForSignal(kind)),
+  );
+  const evidence = uniqueStrings(
+    getRecordStringArray(record, ["evidence", "evidence_refs", "evidence_items", "proof", "signals"]),
+  );
+  const sourceEventIds = uniqueStrings(
+    getRecordStringArray(record, ["source_event_ids", "event_ids", "backend_event_ids", "source_ids"]),
+  );
+  const confidence = normalizeConfidence(
+    record.confidence ?? record.confidence_score ?? record.worker_confidence ?? record.certainty,
+    score / 100,
+  );
+  const recommendedAction =
+    getRecordString(record, ["recommended_action", "top_action", "next_action", "action", "proposed_action"]) ||
+    (kind === "growth"
+      ? "Qualify the opportunity and route the next governed build or commercial action."
+      : kind === "field-intelligence"
+        ? "Convert the repeated pattern into a governed institutional response."
+        : "Advance the workspace through the next governed evaluation action.");
+  const summary =
+    getRecordString(record, ["summary", "description", "reason", "rationale", "detail", "details"]) ||
+    recommendedAction;
+  const signalId =
+    getRecordString(record, ["id", "signal_id", "workspace_id", "run_id", "deployment_id", "archive_id"]) ||
+    `${kind}-${signalSlug(accountLabel)}-${index + 1}`;
+  const pillarIds = uniqueStrings(
+    getRecordStringArray(record, ["pillar_ids", "pillars"]).concat(
+      kind === "growth"
+        ? ["growth", "sales"]
+        : kind === "field-intelligence"
+          ? ["knowledge-research", "governance"]
+          : ["growth", "product", "sales"],
+    ),
+  );
+
+  return {
+    id: signalId,
+    kind,
+    title,
+    summary: trimText(summary, 280),
+    category: getRecordString(record, ["category", "signal_type", "opportunity_type", "entity_type", "queue", "kind"]) || kind,
+    accountLabel,
+    workspaceId,
+    tier: getRecordString(record, ["tier", "plan_tier", "workspace_tier", "account_tier"]),
+    evaluationStage: getRecordString(record, ["evaluation_stage", "stage", "lifecycle_stage"]),
+    lastActivityAt: getRecordString(record, ["last_activity_at", "updated_at", "as_of", "created_at"]),
+    runsUsed: getRecordNumber(record, ["runs_used", "run_count", "count", "usage_count"]),
+    runsLimit: getRecordNumber(record, ["runs_limit", "run_limit", "evaluation_limit", "trial_limit"]),
+    endpointStatus: getRecordString(record, ["endpoint_status", "endpoint", "route_status", "deployment_status"]),
+    evidenceActivity: getRecordString(record, ["evidence_activity", "evidence_status", "evidence_state"]),
+    billingState: getRecordString(record, ["billing_state", "billing_status", "pricing_state"]),
+    reserveState: getRecordString(record, ["reserve_state", "reserve_status", "reserve_balance_state"]),
+    mfaState: getRecordString(record, ["mfa_state", "security_state", "auth_state"]),
+    errorsCount: getRecordNumber(record, ["errors_count", "error_count", "failed_routes", "failures"]),
+    score,
+    riskScore,
+    confidence,
+    evidence: evidence.length > 0 ? evidence : [trimText(summary, 120)],
+    recommendedAction,
+    assignedWorkerIds,
+    committeeId: getRecordString(record, ["committee_id", "owner_committee_id", "committee"]) || chooseOperatorCommittee(assignedWorkerIds),
+    pillarIds,
+    archiveRef: getRecordString(record, ["archive_ref", "archive_id", "archive"]),
+    status: normalizeSignalStatus(record.status ?? record.queue_status, score, riskScore),
+    sourceEventIds,
+  };
+}
+
+function mergeSunnyvaleOverview(
+  fallback: SunnyvaleOverview,
+  remoteSummary: RemoteSunnyvaleSummaryEnvelope | null,
+  evaluationSignals: OperatingSignal[],
+  growthOpportunities: OperatingSignal[],
+  fieldIntelligence: OperatingSignal[],
+): SunnyvaleOverview {
+  const sunnyvale = asRecord(remoteSummary?.sunnyvale) || remoteSummary || {};
+  const totalSignals = evaluationSignals.length + growthOpportunities.length + fieldIntelligence.length;
+  const seriousSignals =
+    evaluationSignals.filter((signal) => signal.riskScore >= 65 || signal.score >= 70).length +
+    growthOpportunities.filter((signal) => signal.score >= 75).length;
+
+  return {
+    totalSignals: Math.round(getRecordNumber(sunnyvale, ["total_signals", "signal_count"]) ?? totalSignals),
+    activeEvaluations: Math.round(
+      getRecordNumber(sunnyvale, ["active_evaluations", "evaluation_count", "evaluation_surgeon_queue_count"]) ?? evaluationSignals.length,
+    ),
+    seriousSignals: Math.round(getRecordNumber(sunnyvale, ["serious_signals", "serious_signal_count"]) ?? seriousSignals),
+    reserveBalance: getRecordNumber(sunnyvale, ["reserve_balance", "reserve", "reserve_live"]) ?? fallback.reserveBalance,
+    workerConfidence: Math.round(
+      getRecordNumber(sunnyvale, ["worker_confidence", "worker_confidence_pct", "confidence_percent"]) ?? fallback.workerConfidence,
+    ),
+    liveWorkers: Math.round(getRecordNumber(sunnyvale, ["live_workers", "running_workers", "workers_live"]) ?? fallback.liveWorkers),
+    failedRoutes: Math.round(getRecordNumber(sunnyvale, ["failed_routes", "route_failures", "failed_route_count"]) ?? fallback.failedRoutes),
+    evidenceExports: Math.round(getRecordNumber(sunnyvale, ["evidence_exports", "evidence_export_count"]) ?? fallback.evidenceExports),
+    lastBackendEventAt:
+      getRecordString(sunnyvale, ["last_backend_event_at", "last_event_at", "as_of", "updated_at"]) || fallback.lastBackendEventAt,
+  };
+}
+
+function buildLocalSunnyvaleInternalSnapshot(): SunnyvaleInternalSnapshot {
   const telemetry = buildTelemetry();
   const evaluationSignals = buildEvaluationSignals();
   const growthOpportunities = buildGrowthOpportunities();
@@ -4404,6 +4656,60 @@ function buildSunnyvaleInternalSnapshot(): SunnyvaleInternalSnapshot {
     growthOpportunities,
     fieldIntelligence,
   };
+}
+
+async function buildSunnyvaleInternalSnapshot(): Promise<SunnyvaleInternalSnapshot> {
+  const fallback = buildLocalSunnyvaleInternalSnapshot();
+
+  if (!UACP_BACKEND_BASE_URL || !INTERNAL_API_KEY) {
+    return fallback;
+  }
+
+  try {
+    const [summaryEnvelope, evaluationPayload, growthPayload] = await Promise.all([
+      fetchInternalBackendJson<RemoteSunnyvaleSummaryEnvelope>("/api/v1/internal/uacp/summary"),
+      fetchInternalBackendJson<unknown>("/api/v1/internal/uacp/evaluation-surgeon"),
+      fetchInternalBackendJson<unknown>("/api/v1/internal/uacp/growth-opportunities"),
+    ]);
+
+    const summarySunnyvale = asRecord(summaryEnvelope?.sunnyvale);
+    const evaluationRecords = extractQueueRecords(
+      evaluationPayload,
+      "evaluation_surgeon_queue",
+    ).length > 0
+      ? extractQueueRecords(evaluationPayload, "evaluation_surgeon_queue")
+      : extractQueueRecords(summarySunnyvale?.evaluation_surgeon_queue, "evaluation_surgeon_queue");
+    const growthRecords = extractQueueRecords(
+      growthPayload,
+      "hub_growth_opportunities",
+    ).length > 0
+      ? extractQueueRecords(growthPayload, "hub_growth_opportunities")
+      : extractQueueRecords(summarySunnyvale?.hub_growth_opportunities, "hub_growth_opportunities");
+
+    if (evaluationRecords.length === 0 && growthRecords.length === 0) {
+      return fallback;
+    }
+
+    const evaluationSignals = evaluationRecords.length > 0
+      ? evaluationRecords.map((record, index) => normalizeRemoteSunnyvaleSignal(record, "evaluation", index))
+      : fallback.evaluationSignals;
+    const growthOpportunities = growthRecords.length > 0
+      ? growthRecords.map((record, index) => normalizeRemoteSunnyvaleSignal(record, "growth", index))
+      : fallback.growthOpportunities;
+    const fieldIntelligence = buildFieldIntelligenceSignals(evaluationSignals);
+
+    return {
+      mode: "live",
+      asOf: now(),
+      overview: mergeSunnyvaleOverview(fallback.overview, summaryEnvelope, evaluationSignals, growthOpportunities, fieldIntelligence),
+      evaluationSignals,
+      growthOpportunities,
+      fieldIntelligence,
+    };
+  } catch (error) {
+    console.warn(`[uacp] sunnyvale backend bridge failed: ${error instanceof Error ? error.message : String(error)}`);
+    return fallback;
+  }
 }
 
 function workerInputSnapshot(worker: OperatorWorker) {
@@ -8100,6 +8406,11 @@ async function startServer() {
         archiveWriteRequired: ARCHIVE_WRITE_REQUIRED,
         schedulerEnabled: true,
         dataDir: DATA_DIR,
+        backendBridge: {
+          enabled: Boolean(UACP_BACKEND_BASE_URL && INTERNAL_API_KEY),
+          baseUrlConfigured: Boolean(UACP_BACKEND_BASE_URL),
+          internalKeyConfigured: Boolean(INTERNAL_API_KEY),
+        },
         rateLimit: rateLimitRuntime.status,
       },
       registry: {
@@ -8142,7 +8453,7 @@ async function startServer() {
   app.get("/api/backend-summary", (_req, res) => res.json(state.backendSummary));
   app.get("/api/backend-events", (_req, res) => res.json(state.backendEvents));
   app.get("/api/command-center", (_req, res) => res.json(buildCommandCenterSnapshot()));
-  app.get("/api/sunnyvale-internal", (_req, res) => res.json(buildSunnyvaleInternalSnapshot()));
+  app.get("/api/sunnyvale-internal", async (_req, res) => res.json(await buildSunnyvaleInternalSnapshot()));
   app.get("/api/research-signals", (_req, res) => res.json(state.researchSignals));
   app.get("/api/research-status", (_req, res) => res.json(state.researchStatus));
   app.get("/api/provider-readiness", async (_req, res) => res.json(await getProviderSnapshot()));
