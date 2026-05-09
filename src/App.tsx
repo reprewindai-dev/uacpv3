@@ -34,12 +34,14 @@ import type {
   GovernedRun,
   InstitutionalPlan,
   OperatorCommittee,
+  OperatingSignal,
   OperatorRun,
   OperatorWorker,
   Pillar,
   ResearchSignal,
   ResearchSourceStatus,
   SkillArtifact,
+  SunnyvaleInternalSnapshot,
   SurfaceId,
   WorkerRuntimeState,
   WorkflowArtifact,
@@ -58,6 +60,7 @@ type DataState = {
   backendSummary: BackendTruthSummary | null;
   backendEvents: BackendProductEvent[];
   commandCenter: CommandCenterSnapshot | null;
+  sunnyvaleInternal: SunnyvaleInternalSnapshot | null;
   plans: InstitutionalPlan[];
   runs: GovernedRun[];
   events: EventItem[];
@@ -82,6 +85,7 @@ const initialState: DataState = {
   backendSummary: null,
   backendEvents: [],
   commandCenter: null,
+  sunnyvaleInternal: null,
   plans: [],
   runs: [],
   events: [],
@@ -120,8 +124,9 @@ export default function App() {
         fetchJson<BackendTruthSummary>("/api/backend-summary"),
         fetchJson<BackendProductEvent[]>("/api/backend-events"),
         fetchJson<CommandCenterSnapshot>("/api/command-center"),
+        fetchJson<SunnyvaleInternalSnapshot>("/api/sunnyvale-internal"),
       ])
-        .then(([telemetry, observability, workerRuntime, operatorRuns, backendSummary, backendEvents, commandCenter]) =>
+        .then(([telemetry, observability, workerRuntime, operatorRuns, backendSummary, backendEvents, commandCenter, sunnyvaleInternal]) =>
           setState((current) => ({
             ...current,
             telemetry,
@@ -131,6 +136,7 @@ export default function App() {
             backendSummary,
             backendEvents,
             commandCenter,
+            sunnyvaleInternal,
           })),
         )
         .catch(() => {});
@@ -173,6 +179,7 @@ export default function App() {
       backendSummary,
       backendEvents,
       commandCenter,
+      sunnyvaleInternal,
       plans,
       runs,
       events,
@@ -195,6 +202,7 @@ export default function App() {
       fetchJson<BackendTruthSummary>("/api/backend-summary"),
       fetchJson<BackendProductEvent[]>("/api/backend-events"),
       fetchJson<CommandCenterSnapshot>("/api/command-center"),
+      fetchJson<SunnyvaleInternalSnapshot>("/api/sunnyvale-internal"),
       fetchJson<InstitutionalPlan[]>("/api/plans"),
       fetchJson<GovernedRun[]>("/api/runs"),
       fetchJson<EventItem[]>("/api/events"),
@@ -219,6 +227,7 @@ export default function App() {
       backendSummary,
       backendEvents,
       commandCenter,
+      sunnyvaleInternal,
       plans,
       runs,
       events,
@@ -416,6 +425,8 @@ export default function App() {
                 runs={state.runs}
                 workflows={state.workflows}
                 committees={state.committees}
+                workers={state.workers}
+                sunnyvaleInternal={state.sunnyvaleInternal}
                 onSelectPlan={(planId) => setSelectedPlanId(planId)}
                 onLaunchRun={launchRun}
               />
@@ -455,6 +466,8 @@ function SunnyvaleSurface({
   runs,
   workflows,
   committees,
+  workers,
+  sunnyvaleInternal,
   onSelectPlan,
   onLaunchRun,
 }: {
@@ -463,9 +476,27 @@ function SunnyvaleSurface({
   runs: GovernedRun[];
   workflows: WorkflowArtifact[];
   committees: Committee[];
+  workers: OperatorWorker[];
+  sunnyvaleInternal: SunnyvaleInternalSnapshot | null;
   onSelectPlan: (planId: string) => void;
   onLaunchRun: (planId: string) => Promise<void>;
 }) {
+  const [activeRoom, setActiveRoom] = useState<"overview" | "evaluation-surgeon" | "hub-growth-navigator" | "field-intelligence">("overview");
+  const [selectedEvaluationId, setSelectedEvaluationId] = useState<string | null>(null);
+  const [selectedGrowthId, setSelectedGrowthId] = useState<string | null>(null);
+  const [selectedIntelligenceId, setSelectedIntelligenceId] = useState<string | null>(null);
+
+  const evaluationSignals = sunnyvaleInternal?.evaluationSignals ?? [];
+  const growthSignals = sunnyvaleInternal?.growthOpportunities ?? [];
+  const intelligenceSignals = sunnyvaleInternal?.fieldIntelligence ?? [];
+  const selectedEvaluation = evaluationSignals.find((signal) => signal.id === selectedEvaluationId) ?? evaluationSignals[0];
+  const selectedGrowth = growthSignals.find((signal) => signal.id === selectedGrowthId) ?? growthSignals[0];
+  const selectedIntelligence =
+    intelligenceSignals.find((signal) => signal.id === selectedIntelligenceId) ?? intelligenceSignals[0];
+  const dataMode = sunnyvaleInternal?.mode || "waiting";
+  const modeLabel = dataMode === "live" ? "live backend" : dataMode === "research-only" ? "research only" : "waiting";
+  const liveRuns = runs.slice(0, 5);
+
   return (
     <>
       <section className="col-span-8 h-full overflow-hidden glass-panel border border-white/5">
@@ -474,138 +505,435 @@ function SunnyvaleSurface({
             <div>
               <h2 className="font-serif italic text-3xl text-white/90">Sunnyvale</h2>
               <p className="text-[10px] uppercase tracking-[0.3em] text-white/30 font-bold mt-1">
-                Execution floor / approval before run
+                Internal operator intelligence / governed execution floor
               </p>
             </div>
             <div className="rounded-full border border-white/10 px-4 py-2 text-[9px] font-mono uppercase tracking-[0.25em] text-blue-300">
-              review before admission
+              {modeLabel}
             </div>
+          </div>
+
+          <div className="mt-5 flex flex-wrap gap-2">
+            <SunnyvaleRoomButton
+              label="Overview"
+              active={activeRoom === "overview"}
+              onClick={() => setActiveRoom("overview")}
+            />
+            <SunnyvaleRoomButton
+              label="Evaluation Surgeon"
+              active={activeRoom === "evaluation-surgeon"}
+              onClick={() => setActiveRoom("evaluation-surgeon")}
+            />
+            <SunnyvaleRoomButton
+              label="Hub Growth Navigator"
+              active={activeRoom === "hub-growth-navigator"}
+              onClick={() => setActiveRoom("hub-growth-navigator")}
+            />
+            <SunnyvaleRoomButton
+              label="Field Intelligence"
+              active={activeRoom === "field-intelligence"}
+              onClick={() => setActiveRoom("field-intelligence")}
+            />
           </div>
         </div>
 
         <div className="h-[calc(100%-109px)] overflow-y-auto custom-scrollbar p-6 space-y-6">
-          {plan ? (
+          {activeRoom === "overview" && (
             <>
-              <Panel title="Governed plan review" icon={<BrainCircuit size={14} className="text-blue-400" />}>
-                <div className="space-y-5">
-                  <div className="flex items-start justify-between gap-6">
-                    <div>
-                      <div className="text-white text-2xl">{plan.title}</div>
-                      <p className="mt-3 text-sm text-white/55 italic">{plan.objective}</p>
+              <Panel title="UACP business pulse" icon={<Radar size={14} className="text-blue-400" />}>
+                {sunnyvaleInternal ? (
+                  <div className="space-y-4">
+                    <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
+                      <MiniStat
+                        icon={<Users size={12} />}
+                        label="Active evaluations"
+                        value={String(sunnyvaleInternal.overview.activeEvaluations)}
+                      />
+                      <MiniStat
+                        icon={<ShieldCheck size={12} />}
+                        label="Serious signals"
+                        value={String(sunnyvaleInternal.overview.seriousSignals)}
+                      />
+                      <MiniStat
+                        icon={<BadgeDollarSign size={12} />}
+                        label="Reserve live"
+                        value={`$${sunnyvaleInternal.overview.reserveBalance.toFixed(2)}`}
+                      />
+                      <MiniStat
+                        icon={<BrainCircuit size={12} />}
+                        label="Worker confidence"
+                        value={`${sunnyvaleInternal.overview.workerConfidence}%`}
+                      />
+                      <MiniStat
+                        icon={<Activity size={12} />}
+                        label="Live workers"
+                        value={String(sunnyvaleInternal.overview.liveWorkers)}
+                      />
+                      <MiniStat
+                        icon={<Gavel size={12} />}
+                        label="Failed routes"
+                        value={String(sunnyvaleInternal.overview.failedRoutes)}
+                      />
+                      <MiniStat
+                        icon={<BookMarked size={12} />}
+                        label="Evidence exports"
+                        value={String(sunnyvaleInternal.overview.evidenceExports)}
+                      />
+                      <MiniStat
+                        icon={<Layers size={12} />}
+                        label="Operating signals"
+                        value={String(sunnyvaleInternal.overview.totalSignals)}
+                      />
                     </div>
-                    <button
-                      onClick={() => void onLaunchRun(plan.id)}
-                      className="px-5 py-3 border border-white/10 text-[10px] uppercase font-bold tracking-[0.3em] hover:bg-white hover:text-black transition-all active:scale-95"
-                    >
-                      Approve & Launch Run
-                    </button>
-                  </div>
 
-                  <div className="grid grid-cols-2 gap-4 xl:grid-cols-4">
-                    <MiniStat icon={<Building2 size={12} />} label="Paying user" value={plan.payingUser} />
-                    <MiniStat icon={<BadgeDollarSign size={12} />} label="Pricing" value={plan.pricingModel} />
-                    <MiniStat icon={<Gavel size={12} />} label="Risk" value={plan.riskTier} />
-                    <MiniStat icon={<Layers size={12} />} label="Revision" value={String(plan.revision)} />
+                    <div className="text-xs text-white/45">
+                      {sunnyvaleInternal.overview.lastBackendEventAt
+                        ? `Last backend truth arrived ${new Date(sunnyvaleInternal.overview.lastBackendEventAt).toLocaleString()}.`
+                        : "Sunnyvale is waiting for normalized backend truth before it can rank real evaluation accounts."}
+                    </div>
                   </div>
-
-                  <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-                    <TokenPanel title="Pillars" items={plan.pillars} />
-                    <TokenPanel title="Committees" items={plan.committeeIds.map((committeeId) => resolveCommittee(committeeId, committees))} />
-                    <TokenPanel title="Workflows" items={plan.workflowIds} />
-                    <TokenPanel title="Skills" items={plan.skillIds} />
-                    <TokenPanel title="Escalation rules" items={plan.escalationRuleIds} />
-                    <ListPanel title="Guardrails" items={plan.guardrails} />
-                    <ListPanel title="Success metrics" items={plan.successMetrics} />
-                    <ValuePanel title="Research query" value={plan.researchQuery || "No live research query recorded for this plan."} />
-                    <ReferencePanel title="Live references" references={plan.researchReferences || []} />
-                    <ProposalPanel title="Governance proposals" proposals={plan.proposals || []} />
-                  </div>
-
-                  <div className="space-y-3">
-                    <div className="text-[10px] uppercase tracking-[0.3em] text-white/25 font-bold">Execution graph</div>
-                    {plan.graph.nodes.map((node) => (
-                      <div key={node.id} className="p-4 rounded-xl border border-white/10 bg-white/[0.02]">
-                        <div className="flex items-center justify-between gap-3">
-                          <div>
-                            <div className="text-white">{node.label}</div>
-                            <div className="mt-1 text-[10px] uppercase tracking-[0.25em] text-white/25">{node.stage}</div>
-                          </div>
-                          <div className="text-[10px] font-mono uppercase tracking-[0.25em] text-blue-300">
-                            {resolveCommittee(node.ownerCommitteeId, committees)}
-                          </div>
-                        </div>
-                        <p className="mt-3 text-sm text-white/55">{node.summary}</p>
-                      </div>
-                    ))}
-                  </div>
-
-                  <div className="space-y-3">
-                    <div className="text-[10px] uppercase tracking-[0.3em] text-white/25 font-bold">Committee votes</div>
-                    {plan.votes.map((vote) => (
-                      <div key={`${vote.member}-${vote.model}`} className="p-4 rounded-xl border border-white/10 bg-white/[0.02]">
-                        <div className="flex items-center justify-between gap-3">
-                          <div>
-                            <div className="text-white">{vote.member}</div>
-                            <div className="mt-1 text-[10px] uppercase tracking-[0.25em] text-white/25">{vote.model}</div>
-                          </div>
-                          <div
-                            className={`text-[10px] font-mono uppercase tracking-[0.25em] ${
-                              vote.vote === "approve"
-                                ? "text-green-400"
-                                : vote.vote === "veto"
-                                  ? "text-red-400"
-                                  : "text-amber-300"
-                            }`}
-                          >
-                            {vote.vote}
-                          </div>
-                        </div>
-                        <p className="mt-3 text-sm text-white/55 italic">{vote.rationale}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                ) : (
+                  <div className="text-sm text-white/45 italic">Sunnyvale read model is still loading.</div>
+                )}
               </Panel>
 
-              <Panel title="Queued plans" icon={<Network size={14} className="text-blue-400" />}>
-                <div className="space-y-3">
-                  {plans.map((entry) => (
-                    <button
-                      key={entry.id}
-                      onClick={() => onSelectPlan(entry.id)}
-                      className={`w-full text-left p-4 rounded-xl border transition ${
-                        plan.id === entry.id
-                          ? "border-blue-500/30 bg-blue-500/10"
-                          : "border-white/10 bg-white/[0.02] hover:bg-white/[0.04]"
-                      }`}
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="text-white">{entry.title}</div>
-                        <ChevronRight size={14} className="text-white/30" />
-                      </div>
-                      <div className="mt-2 text-sm text-white/50">{entry.objective}</div>
-                    </button>
-                  ))}
-                </div>
+              <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+                <Panel title="Evaluation Surgeon queue" icon={<Users size={14} className="text-blue-400" />}>
+                  {evaluationSignals.length > 0 ? (
+                    <div className="space-y-3">
+                      {evaluationSignals.slice(0, 5).map((signal) => (
+                        <button
+                          key={signal.id}
+                          onClick={() => {
+                            setSelectedEvaluationId(signal.id);
+                            setActiveRoom("evaluation-surgeon");
+                          }}
+                          className="w-full text-left p-4 rounded-xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.04] transition"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="text-white">{signal.accountLabel}</div>
+                            <div className="text-[10px] font-mono uppercase tracking-[0.25em] text-blue-300">
+                              {signal.score}% activation
+                            </div>
+                          </div>
+                          <div className="mt-2 text-sm text-white/55">{signal.summary}</div>
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            <span className="px-2 py-1 rounded-full border border-white/10 text-[10px] text-white/55">
+                              risk {signal.riskScore}
+                            </span>
+                            <span className="px-2 py-1 rounded-full border border-white/10 text-[10px] text-white/55">
+                              {signal.assignedWorkerIds.map((workerId) => resolveWorker(workerId, workers)).join(" / ")}
+                            </span>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <EmptyState
+                      icon={<Users size={40} />}
+                      title="No live evaluation queue yet"
+                      body="Sunnyvale will rank workspaces here once the backend starts sending evaluation, billing, endpoint, evidence, and security events into UACP."
+                    />
+                  )}
+                </Panel>
+
+                <Panel title="Hub Growth Navigator" icon={<ArrowUpRight size={14} className="text-blue-400" />}>
+                  {growthSignals.length > 0 ? (
+                    <div className="space-y-3">
+                      {growthSignals.slice(0, 4).map((signal) => (
+                        <button
+                          key={signal.id}
+                          onClick={() => {
+                            setSelectedGrowthId(signal.id);
+                            setActiveRoom("hub-growth-navigator");
+                          }}
+                          className="w-full text-left p-4 rounded-xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.04] transition"
+                        >
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="text-white">{signal.title}</div>
+                            <div className="text-[10px] font-mono uppercase tracking-[0.25em] text-blue-300">
+                              {signal.score}% opportunity
+                            </div>
+                          </div>
+                          <div className="mt-2 text-sm text-white/55">{signal.summary}</div>
+                        </button>
+                      ))}
+                    </div>
+                  ) : (
+                    <EmptyState
+                      icon={<ArrowUpRight size={40} />}
+                      title="No qualified growth opportunities yet"
+                      body="Growth Navigator will populate when backend marketplace or integration events land, or when live research finds a concrete build path worth routing."
+                    />
+                  )}
+                </Panel>
+              </div>
+
+              <Panel title="Field intelligence" icon={<LibraryBig size={14} className="text-blue-400" />}>
+                {intelligenceSignals.length > 0 ? (
+                  <div className="space-y-3">
+                    {intelligenceSignals.slice(0, 3).map((signal) => (
+                      <button
+                        key={signal.id}
+                        onClick={() => {
+                          setSelectedIntelligenceId(signal.id);
+                          setActiveRoom("field-intelligence");
+                        }}
+                        className="w-full text-left p-4 rounded-xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.04] transition"
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="text-white">{signal.title}</div>
+                          <div className="text-[10px] font-mono uppercase tracking-[0.25em] text-blue-300">
+                            {signal.confidence.toFixed(2)} confidence
+                          </div>
+                        </div>
+                        <div className="mt-2 text-sm text-white/55">{signal.summary}</div>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <EmptyState
+                    icon={<LibraryBig size={40} />}
+                    title="No institutional patterns yet"
+                    body="Field Intelligence appears when enough live product behavior accumulates for UACP to describe a repeatable pattern instead of a one-off event."
+                  />
+                )}
               </Panel>
             </>
-          ) : (
-            <EmptyState
-              icon={<Disc size={44} />}
-              title="No reviewed plan in Sunnyvale"
-              body="Compile a plan in the Deterministic Engine first, then route it here for approval."
-            />
+          )}
+
+          {activeRoom === "evaluation-surgeon" && (
+            <>
+              {evaluationSignals.length > 0 ? (
+                <div className="grid grid-cols-12 gap-4">
+                  <div className="col-span-7 space-y-3">
+                    <div className="grid grid-cols-[1.5fr_0.9fr_0.7fr_0.8fr_0.8fr_1.3fr] gap-3 px-4 text-[10px] uppercase tracking-[0.25em] text-white/25">
+                      <div>Workspace</div>
+                      <div>Stage</div>
+                      <div>Runs</div>
+                      <div>Endpoint</div>
+                      <div>Risk</div>
+                      <div>Top action</div>
+                    </div>
+                    {evaluationSignals.map((signal) => (
+                      <button
+                        key={signal.id}
+                        onClick={() => setSelectedEvaluationId(signal.id)}
+                        className={`w-full text-left grid grid-cols-[1.5fr_0.9fr_0.7fr_0.8fr_0.8fr_1.3fr] gap-3 p-4 rounded-xl border transition ${
+                          selectedEvaluation?.id === signal.id
+                            ? "border-blue-500/30 bg-blue-500/10"
+                            : "border-white/10 bg-white/[0.02] hover:bg-white/[0.04]"
+                        }`}
+                      >
+                        <div>
+                          <div className="text-white">{signal.accountLabel}</div>
+                          <div className="mt-1 text-[10px] uppercase tracking-[0.25em] text-white/25">{signal.tier}</div>
+                        </div>
+                        <div className="text-sm text-white/60">{signal.evaluationStage}</div>
+                        <div className="text-sm text-white/60">
+                          {signal.runsUsed ?? 0}
+                          {signal.runsLimit ? `/${signal.runsLimit}` : ""}
+                        </div>
+                        <div className="text-sm text-white/60">{signal.endpointStatus}</div>
+                        <div className="text-sm text-white/60">{signal.riskScore}</div>
+                        <div className="text-sm text-white/60">{signal.recommendedAction}</div>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="col-span-5">
+                    {selectedEvaluation && (
+                      <OperatingSignalDetail
+                        signal={selectedEvaluation}
+                        workers={workers}
+                        committees={committees}
+                        scoreLabel="activation"
+                      />
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <EmptyState
+                  icon={<Users size={44} />}
+                  title="Evaluation Surgeon is waiting for backend truth"
+                  body="Send real workspace, evaluation, endpoint, evidence, billing, and security events into `/api/v1/internal/backend/events` and UACP will rank them here."
+                />
+              )}
+            </>
+          )}
+
+          {activeRoom === "hub-growth-navigator" && (
+            <>
+              {growthSignals.length > 0 ? (
+                <div className="grid grid-cols-12 gap-4">
+                  <div className="col-span-7 space-y-3">
+                    {growthSignals.map((signal) => (
+                      <button
+                        key={signal.id}
+                        onClick={() => setSelectedGrowthId(signal.id)}
+                        className={`w-full text-left p-4 rounded-xl border transition ${
+                          selectedGrowth?.id === signal.id
+                            ? "border-blue-500/30 bg-blue-500/10"
+                            : "border-white/10 bg-white/[0.02] hover:bg-white/[0.04]"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-white">{signal.title}</div>
+                            <div className="mt-1 text-[10px] uppercase tracking-[0.25em] text-white/25">
+                              {signal.category} / {signal.accountLabel}
+                            </div>
+                          </div>
+                          <div className="text-[10px] font-mono uppercase tracking-[0.25em] text-blue-300">
+                            {signal.score}% opportunity
+                          </div>
+                        </div>
+                        <div className="mt-3 text-sm text-white/55">{signal.summary}</div>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="col-span-5">
+                    {selectedGrowth && (
+                      <OperatingSignalDetail
+                        signal={selectedGrowth}
+                        workers={workers}
+                        committees={committees}
+                        scoreLabel="opportunity"
+                      />
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <EmptyState
+                  icon={<ArrowUpRight size={44} />}
+                  title="No governed growth queue yet"
+                  body="Growth Navigator will populate when real marketplace, integration, buyer, vendor, or live research opportunities are available for UACP to route."
+                />
+              )}
+            </>
+          )}
+
+          {activeRoom === "field-intelligence" && (
+            <>
+              {intelligenceSignals.length > 0 ? (
+                <div className="grid grid-cols-12 gap-4">
+                  <div className="col-span-7 space-y-3">
+                    {intelligenceSignals.map((signal) => (
+                      <button
+                        key={signal.id}
+                        onClick={() => setSelectedIntelligenceId(signal.id)}
+                        className={`w-full text-left p-4 rounded-xl border transition ${
+                          selectedIntelligence?.id === signal.id
+                            ? "border-blue-500/30 bg-blue-500/10"
+                            : "border-white/10 bg-white/[0.02] hover:bg-white/[0.04]"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-3">
+                          <div>
+                            <div className="text-white">{signal.title}</div>
+                            <div className="mt-1 text-[10px] uppercase tracking-[0.25em] text-white/25">{signal.category}</div>
+                          </div>
+                          <div className="text-[10px] font-mono uppercase tracking-[0.25em] text-blue-300">
+                            {(signal.confidence * 100).toFixed(0)}% confidence
+                          </div>
+                        </div>
+                        <div className="mt-3 text-sm text-white/55">{signal.summary}</div>
+                      </button>
+                    ))}
+                  </div>
+
+                  <div className="col-span-5">
+                    {selectedIntelligence && (
+                      <OperatingSignalDetail
+                        signal={selectedIntelligence}
+                        workers={workers}
+                        committees={committees}
+                        scoreLabel="signal"
+                      />
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <EmptyState
+                  icon={<LibraryBig size={44} />}
+                  title="No field intelligence patterns yet"
+                  body="Field Intelligence appears after repeated product behavior reveals a stable pattern worth routing back into the institution."
+                />
+              )}
+            </>
           )}
         </div>
       </section>
 
       <section className="col-span-4 h-full overflow-hidden flex flex-col gap-4">
+        <Panel title="Governed admission queue" icon={<BrainCircuit size={14} className="text-blue-400" />}>
+          {plan ? (
+            <div className="space-y-4">
+              <div>
+                <div className="text-white text-xl">{plan.title}</div>
+                <p className="mt-2 text-sm text-white/55 italic">{plan.objective}</p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <MiniStat icon={<Building2 size={12} />} label="Paying user" value={plan.payingUser} />
+                <MiniStat icon={<BadgeDollarSign size={12} />} label="Pricing" value={plan.pricingModel} />
+                <MiniStat icon={<Gavel size={12} />} label="Risk" value={plan.riskTier} />
+                <MiniStat icon={<Layers size={12} />} label="Revision" value={String(plan.revision)} />
+              </div>
+
+              <TokenPanel title="Pillars" items={plan.pillars} />
+              <TokenPanel
+                title="Committees"
+                items={plan.committeeIds.map((committeeId) => resolveCommittee(committeeId, committees))}
+              />
+              <ListPanel title="Guardrails" items={plan.guardrails} />
+              <ReferencePanel title="Live references" references={plan.researchReferences || []} />
+
+              <button
+                onClick={() => void onLaunchRun(plan.id)}
+                className="w-full px-5 py-3 border border-white/10 text-[10px] uppercase font-bold tracking-[0.3em] hover:bg-white hover:text-black transition-all active:scale-95"
+              >
+                Approve & Launch Run
+              </button>
+            </div>
+          ) : (
+            <div className="text-sm text-white/45 italic">Compile a plan in the Deterministic Engine first, then review and admit it here.</div>
+          )}
+        </Panel>
+
+        <Panel title="Queued plans" icon={<Network size={14} className="text-blue-400" />}>
+          <div className="space-y-3">
+            {plans.length > 0 ? (
+              plans.map((entry) => (
+                <button
+                  key={entry.id}
+                  onClick={() => onSelectPlan(entry.id)}
+                  className={`w-full text-left p-4 rounded-xl border transition ${
+                    plan?.id === entry.id
+                      ? "border-blue-500/30 bg-blue-500/10"
+                      : "border-white/10 bg-white/[0.02] hover:bg-white/[0.04]"
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-white">{entry.title}</div>
+                    <ChevronRight size={14} className="text-white/30" />
+                  </div>
+                  <div className="mt-2 text-sm text-white/50">{entry.objective}</div>
+                </button>
+              ))
+            ) : (
+              <div className="text-sm text-white/45 italic">No governed plans are queued yet.</div>
+            )}
+          </div>
+        </Panel>
+
         <Panel title="Live runs" icon={<Activity size={14} className="text-blue-400" />}>
           <div className="space-y-4">
-            {runs.length === 0 && (
+            {liveRuns.length === 0 && (
               <div className="text-sm text-white/45 italic">No runs yet. Approval here opens the first governed run.</div>
             )}
-            {runs.map((run) => (
+            {liveRuns.map((run) => (
               <div key={run.id} className="p-4 rounded-xl border border-white/10 bg-white/[0.02]">
                 <div className="flex items-center justify-between gap-3">
                   <div>
@@ -1230,6 +1558,82 @@ function EmptyState({
       <p className="max-w-xl text-center text-sm text-white/45">{body}</p>
     </div>
   );
+}
+
+function SunnyvaleRoomButton({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-4 py-2 rounded-full border text-[10px] uppercase tracking-[0.25em] font-bold transition ${
+        active
+          ? "border-blue-500/30 bg-blue-500/10 text-blue-300"
+          : "border-white/10 bg-white/[0.02] text-white/45 hover:bg-white/[0.04]"
+      }`}
+    >
+      {label}
+    </button>
+  );
+}
+
+function OperatingSignalDetail({
+  signal,
+  workers,
+  committees,
+  scoreLabel,
+}: {
+  signal: OperatingSignal;
+  workers: OperatorWorker[];
+  committees: Committee[];
+  scoreLabel: string;
+}) {
+  return (
+    <Panel title="Signal detail" icon={<ChevronRight size={14} className="text-blue-400" />}>
+      <div className="space-y-4">
+        <div>
+          <div className="text-white text-xl">{signal.title}</div>
+          <div className="mt-2 text-sm text-white/55">{signal.summary}</div>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <MiniStat icon={<Radar size={12} />} label={scoreLabel} value={`${signal.score}%`} />
+          <MiniStat icon={<ShieldCheck size={12} />} label="Risk" value={`${signal.riskScore}`} />
+          <MiniStat icon={<BrainCircuit size={12} />} label="Confidence" value={`${(signal.confidence * 100).toFixed(0)}%`} />
+          <MiniStat icon={<Gavel size={12} />} label="Status" value={signal.status} />
+        </div>
+
+        <div className="grid grid-cols-1 gap-4">
+          <TokenPanel title="Assigned workers" items={signal.assignedWorkerIds.map((workerId) => resolveWorker(workerId, workers))} />
+          <TokenPanel title="Pillars" items={signal.pillarIds} />
+          <ValuePanel title="Committee" value={signal.committeeId ? resolveCommittee(signal.committeeId, committees) : "No committee mapping yet."} />
+          {signal.kind === "evaluation" && (
+            <div className="grid grid-cols-2 gap-3">
+              <MiniStat icon={<Users size={12} />} label="Stage" value={signal.evaluationStage || "n/a"} />
+              <MiniStat icon={<Building2 size={12} />} label="Tier" value={signal.tier || "n/a"} />
+              <MiniStat
+                icon={<Activity size={12} />}
+                label="Runs"
+                value={`${signal.runsUsed ?? 0}${signal.runsLimit ? `/${signal.runsLimit}` : ""}`}
+              />
+              <MiniStat icon={<Network size={12} />} label="Endpoint" value={signal.endpointStatus || "n/a"} />
+              <MiniStat icon={<BookMarked size={12} />} label="Evidence" value={signal.evidenceActivity || "n/a"} />
+              <MiniStat icon={<BadgeDollarSign size={12} />} label="Reserve" value={signal.reserveState || "n/a"} />
+              <MiniStat icon={<ShieldCheck size={12} />} label="MFA" value={signal.mfaState || "n/a"} />
+              <MiniStat icon={<Disc size={12} />} label="Errors" value={String(signal.errorsCount ?? 0)} />
+            </div>
+          )}
+          <ListPanel title="Evidence" items={signal.evidence} />
+          <ValuePanel title="Recommended action" value={signal.recommendedAction} />
+          <ValuePanel title="Archive reference" value={signal.archiveRef || "No archive link yet for this signal."} />
+          <ValuePanel title="Source events" value={signal.sourceEventIds.join(", ") || "No source events recorded."} />
+          {signal.lastActivityAt && <ValuePanel title="Last activity" value={new Date(signal.lastActivityAt).toLocaleString()} />}
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+function resolveWorker(id: string, workers: OperatorWorker[]) {
+  return workers.find((worker) => worker.id === id)?.displayName || id;
 }
 
 function resolveCommittee(id: string, committees: Committee[]) {

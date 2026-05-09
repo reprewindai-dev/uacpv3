@@ -34,11 +34,13 @@ import type {
   RiskTier,
   RunStageRecord,
   SkillArtifact,
+  SunnyvaleInternalSnapshot,
   SurfaceId,
   WorkerRuntimeState,
   WorkflowArtifact,
   InstitutionalPlan,
   CommandCenterSnapshot,
+  OperatingSignal,
 } from "./src/types";
 
 const PORT = Number(process.env.PORT || 3000);
@@ -1891,6 +1893,515 @@ function buildCommandCenterSnapshot(): CommandCenterSnapshot {
   };
 }
 
+type WorkspaceOperatingAccumulator = {
+  key: string;
+  workspaceId?: string;
+  accountLabel: string;
+  tier?: string;
+  lastActivityAt?: string;
+  runsUsed: number;
+  runsLimit?: number;
+  endpointCreated: boolean;
+  endpointTested: boolean;
+  endpointFailed: boolean;
+  evidenceViewed: boolean;
+  evidenceExported: boolean;
+  billingViewed: boolean;
+  reserveAdded: boolean;
+  reserveBalance?: number;
+  mfaEnabled: boolean;
+  mfaIncomplete: boolean;
+  errorsCount: number;
+  archiveRefs: Set<string>;
+  eventIds: Set<string>;
+  evidence: Set<string>;
+  workerIds: Set<string>;
+  committeeIds: Set<string>;
+  pillarIds: Set<string>;
+};
+
+function getPayloadString(payload: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = payload[key];
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function getLatestArchiveForEventIds(eventIds: string[]) {
+  return state.archives.find((archive) => {
+    const lineage = Array.isArray(archive.lineage) ? archive.lineage : [];
+    return eventIds.some((eventId) => lineage.includes(eventId));
+  });
+}
+
+function chooseOperatorCommittee(workerIds: string[]) {
+  let bestCommitteeId: string | undefined;
+  let bestScore = -1;
+
+  for (const committee of activeOperatorCommittees()) {
+    const overlap = workerIds.filter((workerId) => committee.workerIds.includes(workerId)).length;
+    if (overlap > bestScore) {
+      bestScore = overlap;
+      bestCommitteeId = committee.id;
+    }
+  }
+
+  return bestCommitteeId;
+}
+
+function buildWorkspaceOperatingAccumulators() {
+  const accumulators = new Map<string, WorkspaceOperatingAccumulator>();
+
+  for (const event of state.backendEvents) {
+    const key = event.workspaceId || event.tenantId || event.userId || event.entityId;
+    const text = `${event.eventType} ${event.entityType} ${event.status} ${JSON.stringify(event.payload)}`.toLowerCase();
+    const existing = accumulators.get(key);
+    const accountLabel =
+      getPayloadString(event.payload, ["workspace_name", "workspaceName", "organization", "org", "email", "account_name"]) ||
+      event.workspaceId ||
+      event.tenantId ||
+      event.userId ||
+      event.entityId;
+
+    const next = existing || {
+      key,
+      workspaceId: event.workspaceId,
+      accountLabel,
+      tier: getPayloadString(event.payload, ["tier", "plan", "subscription_tier"]),
+      lastActivityAt: event.timestamp,
+      runsUsed: 0,
+      runsLimit: getPayloadNumber(event.payload, ["runs_limit", "run_limit", "evaluation_limit", "trial_limit"]),
+      endpointCreated: false,
+      endpointTested: false,
+      endpointFailed: false,
+      evidenceViewed: false,
+      evidenceExported: false,
+      billingViewed: false,
+      reserveAdded: false,
+      reserveBalance: getPayloadNumber(event.payload, ["reserve_balance", "reserveBalance", "wallet_balance"]),
+      mfaEnabled: false,
+      mfaIncomplete: false,
+      errorsCount: 0,
+      archiveRefs: new Set<string>(),
+      eventIds: new Set<string>(),
+      evidence: new Set<string>(),
+      workerIds: new Set<string>(),
+      committeeIds: new Set<string>(),
+      pillarIds: new Set<string>(),
+    } satisfies WorkspaceOperatingAccumulator;
+
+    next.accountLabel = next.accountLabel || accountLabel;
+    next.workspaceId = next.workspaceId || event.workspaceId;
+    next.lastActivityAt = !next.lastActivityAt || new Date(event.timestamp) > new Date(next.lastActivityAt) ? event.timestamp : next.lastActivityAt;
+    next.tier = next.tier || getPayloadString(event.payload, ["tier", "plan", "subscription_tier"]);
+    next.runsLimit = next.runsLimit ?? getPayloadNumber(event.payload, ["runs_limit", "run_limit", "evaluation_limit", "trial_limit"]);
+    next.reserveBalance = next.reserveBalance ?? getPayloadNumber(event.payload, ["reserve_balance", "reserveBalance", "wallet_balance"]);
+
+    const runsUsed = getPayloadNumber(event.payload, ["runs_used", "run_count", "count", "usage_count"]);
+    if (typeof runsUsed === "number" && runsUsed > next.runsUsed) {
+      next.runsUsed = runsUsed;
+    }
+    if (/(playground|run_completed|run_used|evaluation_started|evaluation_limit_reached)/.test(text) && next.runsUsed === 0) {
+      next.runsUsed += 1;
+    }
+
+    if (/(endpoint_created|deployment_created|route_created|endpoint)/.test(text)) {
+      next.endpointCreated = true;
+    }
+    if (/(endpoint_tested|test_succeeded|pipeline_test_succeeded|endpoint_verified)/.test(text) || (/(endpoint|pipeline|route)/.test(text) && event.status === "succeeded")) {
+      next.endpointTested = true;
+    }
+    if (/(endpoint_test_failed|pipeline_test_failed|route_failed|endpoint_failed|deployment_failed)/.test(text) || event.status === "failed") {
+      next.endpointFailed = true;
+      next.errorsCount += 1;
+    }
+    if (/(evidence_viewed|evidence_opened|evidence_bundle_viewed|gdpr_viewed|hipaa_viewed)/.test(text)) {
+      next.evidenceViewed = true;
+    }
+    if (/(evidence_export|evidence_bundle|export)/.test(text)) {
+      next.evidenceExported = true;
+    }
+    if (/(billing_page_opened|billing_viewed|pricing_viewed|subscription_viewed)/.test(text)) {
+      next.billingViewed = true;
+    }
+    if (/(reserve_added|reserve_funded|wallet_funded|payment_succeeded|subscription_activated)/.test(text)) {
+      next.reserveAdded = true;
+    }
+    if (/(mfa_enabled|mfa_completed|2fa_enabled)/.test(text)) {
+      next.mfaEnabled = true;
+    }
+    if (/(mfa_incomplete|mfa_required|2fa_required|security_incomplete)/.test(text)) {
+      next.mfaIncomplete = true;
+    }
+
+    if (event.archiveId) {
+      next.archiveRefs.add(event.archiveId);
+    }
+    next.eventIds.add(event.eventId);
+    next.workerIds = new Set([...next.workerIds, ...event.workerIds]);
+    next.committeeIds = new Set([...next.committeeIds, ...event.committeeIds]);
+    next.pillarIds = new Set([...next.pillarIds, ...event.pillarIds]);
+
+    if (next.runsLimit && next.runsUsed >= next.runsLimit) {
+      next.evidence.add(`Evaluation limit reached at ${next.runsUsed}/${next.runsLimit} runs.`);
+    }
+    if (next.endpointTested) {
+      next.evidence.add("Endpoint created and tested successfully.");
+    } else if (next.endpointCreated) {
+      next.evidence.add("Endpoint has been created but not fully validated.");
+    }
+    if (next.evidenceViewed) {
+      next.evidence.add("Evidence surface was viewed by the account.");
+    }
+    if (next.evidenceExported) {
+      next.evidence.add("Evidence bundle was exported.");
+    }
+    if (next.billingViewed) {
+      next.evidence.add("Billing or pricing surface was opened.");
+    }
+    if (next.reserveAdded || (typeof next.reserveBalance === "number" && next.reserveBalance > 0)) {
+      next.evidence.add("Reserve funding or activation payment behavior is present.");
+    }
+    if (next.endpointFailed || next.errorsCount > 0) {
+      next.evidence.add("Technical failure or route error is blocking activation.");
+    }
+    if (next.mfaIncomplete) {
+      next.evidence.add("Security readiness is incomplete because MFA is not finished.");
+    } else if (next.mfaEnabled) {
+      next.evidence.add("Security readiness improved with MFA enabled.");
+    }
+
+    accumulators.set(key, next);
+  }
+
+  return [...accumulators.values()];
+}
+
+function buildEvaluationSignals(): OperatingSignal[] {
+  const accumulators = buildWorkspaceOperatingAccumulators();
+
+  return accumulators
+    .map((entry) => {
+      const reserveState =
+        entry.reserveAdded || (typeof entry.reserveBalance === "number" && entry.reserveBalance > 0)
+          ? `reserve live${typeof entry.reserveBalance === "number" ? ` ($${entry.reserveBalance.toFixed(2)})` : ""}`
+          : entry.billingViewed
+            ? "billing viewed / no reserve"
+            : "no reserve";
+      const endpointStatus = entry.endpointFailed
+        ? "failed"
+        : entry.endpointTested
+          ? "created + tested"
+          : entry.endpointCreated
+            ? "created"
+            : "not started";
+      const evidenceActivity = entry.evidenceExported ? "exported" : entry.evidenceViewed ? "viewed" : "none";
+      const mfaState = entry.mfaEnabled ? "enabled" : entry.mfaIncomplete ? "incomplete" : "not started";
+      const evaluationStage =
+        entry.reserveAdded || (typeof entry.reserveBalance === "number" && entry.reserveBalance > 0)
+          ? "Activation ready"
+          : entry.endpointTested && (entry.evidenceViewed || entry.billingViewed)
+            ? "Serious evaluation"
+            : entry.endpointCreated || entry.runsUsed > 0 || entry.billingViewed
+              ? "Active evaluation"
+              : "Free evaluation";
+
+      let activationScore = 18;
+      activationScore += Math.min(24, entry.runsUsed * 6);
+      activationScore += entry.endpointCreated ? 12 : 0;
+      activationScore += entry.endpointTested ? 18 : 0;
+      activationScore += entry.evidenceViewed ? 10 : 0;
+      activationScore += entry.evidenceExported ? 6 : 0;
+      activationScore += entry.billingViewed ? 8 : 0;
+      activationScore += entry.reserveAdded ? 18 : 0;
+      activationScore += entry.mfaEnabled ? 8 : 0;
+      activationScore -= entry.endpointFailed ? 12 : 0;
+      activationScore -= Math.min(12, entry.errorsCount * 4);
+      activationScore = clamp(Math.round(activationScore), 0, 99);
+
+      let riskScore = 12;
+      riskScore += entry.endpointFailed ? 28 : 0;
+      riskScore += Math.min(18, entry.errorsCount * 6);
+      riskScore += entry.billingViewed && !entry.reserveAdded ? 16 : 0;
+      riskScore += entry.runsLimit && entry.runsUsed >= entry.runsLimit && !entry.reserveAdded ? 22 : 0;
+      riskScore += entry.mfaIncomplete ? 14 : 0;
+      riskScore += entry.endpointCreated && !entry.endpointTested ? 8 : 0;
+      riskScore -= entry.endpointTested ? 10 : 0;
+      riskScore -= entry.reserveAdded ? 14 : 0;
+      riskScore = clamp(Math.round(riskScore), 0, 100);
+
+      const confidence = clamp(
+        ((entry.eventIds.size * 0.12) + (entry.evidence.size * 0.08) + (entry.workerIds.size * 0.03)),
+        0.35,
+        0.98,
+      );
+
+      let recommendedAction = "Drive the next successful endpoint test and attach the correct evidence path.";
+      if (entry.endpointFailed || entry.errorsCount > 0) {
+        recommendedAction = "Route this account through Sentinel and Mirror, clear the technical blocker, and retest the endpoint.";
+      } else if (entry.runsLimit && entry.runsUsed >= entry.runsLimit && !entry.reserveAdded) {
+        recommendedAction = "Explain activation, the reserve model, and the regulated access path before evaluation stalls.";
+      } else if ((entry.evidenceViewed || entry.evidenceExported) && !entry.reserveAdded) {
+        recommendedAction = "Attach the evidence summary, explain activation, and move the account toward reserve-funded access.";
+      } else if (entry.billingViewed && !entry.reserveAdded) {
+        recommendedAction = "Clarify pricing and reserve economics before the account drifts.";
+      } else if (entry.mfaIncomplete && (entry.endpointCreated || entry.endpointTested)) {
+        recommendedAction = "Complete MFA and security readiness before deeper regulated evaluation.";
+      } else if (entry.endpointTested) {
+        recommendedAction = "Offer a technical walkthrough and present the strongest evidence bundle now that the endpoint is proven.";
+      }
+
+      const assignedWorkerIds = uniqueStrings([
+        "gauge",
+        "welcome",
+        ...(entry.evidenceViewed || entry.evidenceExported ? ["ledger"] : []),
+        ...(entry.billingViewed || entry.reserveAdded ? ["mint"] : []),
+        ...(entry.endpointFailed || entry.errorsCount > 0 ? ["sentinel", "mirror", "sheriff"] : []),
+        ...(entry.endpointCreated || entry.endpointTested ? ["pulse"] : []),
+      ]);
+
+      const archive = entry.archiveRefs.size > 0 ? [...entry.archiveRefs][0] : getLatestArchiveForEventIds([...entry.eventIds])?.id;
+
+      return {
+        id: `sig-${entry.key}`,
+        kind: "evaluation",
+        title: `${entry.accountLabel} evaluation signal`,
+        summary: `${evaluationStage} with ${entry.runsUsed}${entry.runsLimit ? `/${entry.runsLimit}` : ""} runs, endpoint ${endpointStatus}, evidence ${evidenceActivity}, and ${reserveState}.`,
+        category: "evaluation",
+        accountLabel: entry.accountLabel,
+        workspaceId: entry.workspaceId,
+        tier: entry.tier || "free evaluation",
+        evaluationStage,
+        lastActivityAt: entry.lastActivityAt,
+        runsUsed: entry.runsUsed,
+        runsLimit: entry.runsLimit,
+        endpointStatus,
+        evidenceActivity,
+        billingState: entry.billingViewed ? "viewed" : "not viewed",
+        reserveState,
+        mfaState,
+        errorsCount: entry.errorsCount,
+        score: activationScore,
+        riskScore,
+        confidence,
+        evidence: [...entry.evidence].slice(0, 8),
+        recommendedAction,
+        assignedWorkerIds,
+        committeeId: chooseOperatorCommittee(assignedWorkerIds),
+        pillarIds: uniqueStrings([
+          ...entry.pillarIds,
+          "growth",
+          "sales",
+          "product",
+          ...(entry.billingViewed || entry.reserveAdded ? ["finance"] : []),
+          ...(entry.mfaEnabled || entry.mfaIncomplete ? ["compliance-risk"] : []),
+        ]),
+        archiveRef: archive,
+        status: riskScore >= 70 ? "escalated" : activationScore >= 75 ? "ready" : riskScore >= 45 ? "watch" : "open",
+        sourceEventIds: [...entry.eventIds],
+      } satisfies OperatingSignal;
+    })
+    .sort((left, right) => {
+      const rightWeight = (right.riskScore * 1.1) + right.score;
+      const leftWeight = (left.riskScore * 1.1) + left.score;
+      return rightWeight - leftWeight;
+    });
+}
+
+function buildGrowthOpportunities(): OperatingSignal[] {
+  const opportunities: OperatingSignal[] = [];
+  const builderArchive = state.archives.find((archive) => archive.title.toLowerCase().includes("builder") || archive.summary.toLowerCase().includes("builder"));
+
+  for (const event of state.backendEvents) {
+    const text = `${event.eventType} ${event.entityType} ${event.status} ${JSON.stringify(event.payload)}`.toLowerCase();
+    if (!/(marketplace|install|vendor|partner|integration|tool|registry|github)/.test(text)) {
+      continue;
+    }
+
+    const title =
+      getPayloadString(event.payload, ["opportunity_title", "integration_name", "tool_name", "vendor_name"]) ||
+      `${event.entityType} opportunity`;
+    const accountLabel =
+      getPayloadString(event.payload, ["workspace_name", "organization", "org", "account_name"]) ||
+      event.workspaceId ||
+      event.entityId;
+    const score = clamp(
+      Math.round(
+        (event.severity === "critical" ? 82 : event.severity === "warning" ? 68 : 56) +
+        (/(broken|missing|failed|gap|abandoned)/.test(text) ? 12 : 0),
+      ),
+      0,
+      99,
+    );
+    const workers = /(tool|integration|github|registry)/.test(text)
+      ? ["builder-scout", "builder-forge", "builder-arbiter"]
+      : ["harvest", "scout", "signal"];
+
+    opportunities.push({
+      id: `growth-${event.eventId}`,
+      kind: "growth",
+      title,
+      summary: `UACP detected a ${event.entityType} opportunity from backend truth and mapped it into a governed worker route.`,
+      category: /(tool|integration|github|registry)/.test(text) ? "tool" : "buyer",
+      accountLabel,
+      score,
+      riskScore: clamp(Math.round(score * 0.45), 10, 75),
+      confidence: clamp(0.45 + (event.workerIds.length * 0.07), 0.45, 0.92),
+      evidence: [
+        `Backend event ${event.eventType} arrived with ${event.severity} severity.`,
+        `Entity: ${event.entityType}/${event.entityId}.`,
+        ...(event.workspaceId ? [`Workspace context: ${event.workspaceId}.`] : []),
+      ],
+      recommendedAction: /(tool|integration|github|registry)/.test(text)
+        ? "Validate the pain with Builder Scout, open a clean-room spec, and gate the route through Builder Arbiter."
+        : "Qualify the account or vendor path, then route the best next move through Harvest and Scout.",
+      assignedWorkerIds: workers,
+      committeeId: chooseOperatorCommittee(workers),
+      pillarIds: /(tool|integration|github|registry)/.test(text)
+        ? ["engineering", "product", "knowledge-research"]
+        : ["growth", "sales", "operations"],
+      archiveRef: event.archiveId || builderArchive?.id,
+      status: score >= 72 ? "ready" : "open",
+      sourceEventIds: [event.eventId],
+    });
+  }
+
+  return opportunities
+    .sort((left, right) => (right.score + right.confidence * 10) - (left.score + left.confidence * 10))
+    .slice(0, 12);
+}
+
+function buildFieldIntelligenceSignals(evaluationSignals: OperatingSignal[]): OperatingSignal[] {
+  const intelligence: OperatingSignal[] = [];
+  const evaluationCliff = evaluationSignals.filter((signal) => (signal.runsLimit || 0) > 0 && (signal.runsUsed || 0) >= (signal.runsLimit || 0) && !/reserve live/.test(signal.reserveState || ""));
+  const evidenceMoment = evaluationSignals.filter((signal) => signal.evidenceActivity && signal.evidenceActivity !== "none");
+  const endpointMoment = evaluationSignals.filter((signal) => signal.endpointStatus === "created + tested");
+  const mfaGate = evaluationSignals.filter((signal) => signal.mfaState === "incomplete");
+
+  if (evaluationCliff.length > 0) {
+    intelligence.push({
+      id: "intel-evaluation-cliff",
+      kind: "field-intelligence",
+      title: "The Evaluation Cliff",
+      summary: "Accounts that consume the full evaluation allowance without reserve activation are the clearest stall pattern in the product truth.",
+      category: "activation-pattern",
+      accountLabel: `${evaluationCliff.length} accounts`,
+      score: clamp(58 + evaluationCliff.length * 6, 58, 96),
+      riskScore: clamp(45 + evaluationCliff.length * 7, 45, 92),
+      confidence: clamp(0.42 + evaluationCliff.length * 0.08, 0.42, 0.94),
+      evidence: evaluationCliff.slice(0, 4).map((signal) => `${signal.accountLabel} hit ${signal.runsUsed}/${signal.runsLimit} without reserve activation.`),
+      recommendedAction: "Welcome, Mint, and Ledger should convert this pattern into a direct activation explanation sequence with evidence attached.",
+      assignedWorkerIds: ["welcome", "mint", "ledger", "gauge"],
+      committeeId: chooseOperatorCommittee(["welcome", "mint", "ledger", "gauge"]),
+      pillarIds: ["growth", "sales", "finance", "product"],
+      archiveRef: evaluationCliff.find((signal) => signal.archiveRef)?.archiveRef,
+      status: "watch",
+      sourceEventIds: evaluationCliff.flatMap((signal) => signal.sourceEventIds).slice(0, 10),
+    });
+  }
+
+  if (evidenceMoment.length > 0) {
+    intelligence.push({
+      id: "intel-evidence-signal",
+      kind: "field-intelligence",
+      title: "The Evidence Signal",
+      summary: "Evidence interaction is a stronger operator-intent signal than casual prompt activity, especially once an endpoint has been tested.",
+      category: "buyer-intent",
+      accountLabel: `${evidenceMoment.length} accounts`,
+      score: clamp(52 + evidenceMoment.length * 5, 52, 92),
+      riskScore: 28,
+      confidence: clamp(0.4 + evidenceMoment.length * 0.08, 0.4, 0.93),
+      evidence: evidenceMoment.slice(0, 4).map((signal) => `${signal.accountLabel} touched evidence before activation.`),
+      recommendedAction: "Ledger should package the strongest proof assets while Welcome sequences the correct activation message.",
+      assignedWorkerIds: ["ledger", "welcome", "signal"],
+      committeeId: chooseOperatorCommittee(["ledger", "welcome", "signal"]),
+      pillarIds: ["growth", "sales", "knowledge-research"],
+      archiveRef: evidenceMoment.find((signal) => signal.archiveRef)?.archiveRef,
+      status: "open",
+      sourceEventIds: evidenceMoment.flatMap((signal) => signal.sourceEventIds).slice(0, 10),
+    });
+  }
+
+  if (endpointMoment.length > 0) {
+    intelligence.push({
+      id: "intel-endpoint-moment",
+      kind: "field-intelligence",
+      title: "The Endpoint Moment",
+      summary: "A successful endpoint test is the cleanest threshold from casual evaluation into serious deployment intent.",
+      category: "technical-success",
+      accountLabel: `${endpointMoment.length} accounts`,
+      score: clamp(60 + endpointMoment.length * 4, 60, 90),
+      riskScore: 22,
+      confidence: clamp(0.45 + endpointMoment.length * 0.07, 0.45, 0.91),
+      evidence: endpointMoment.slice(0, 4).map((signal) => `${signal.accountLabel} created and tested an endpoint successfully.`),
+      recommendedAction: "Sentinel and Pulse should protect the path while Welcome and Harvest convert the account into a guided deployment conversation.",
+      assignedWorkerIds: ["sentinel", "pulse", "welcome", "harvest"],
+      committeeId: chooseOperatorCommittee(["sentinel", "pulse", "welcome", "harvest"]),
+      pillarIds: ["product", "engineering", "growth", "sales"],
+      archiveRef: endpointMoment.find((signal) => signal.archiveRef)?.archiveRef,
+      status: "ready",
+      sourceEventIds: endpointMoment.flatMap((signal) => signal.sourceEventIds).slice(0, 10),
+    });
+  }
+
+  if (mfaGate.length > 0) {
+    intelligence.push({
+      id: "intel-mfa-trust-gate",
+      kind: "field-intelligence",
+      title: "The MFA Trust Gate",
+      summary: "Security completion is a gating signal for regulated or serious accounts; partial setup creates avoidable drag.",
+      category: "security-readiness",
+      accountLabel: `${mfaGate.length} accounts`,
+      score: clamp(54 + mfaGate.length * 5, 54, 88),
+      riskScore: clamp(48 + mfaGate.length * 6, 48, 90),
+      confidence: clamp(0.4 + mfaGate.length * 0.08, 0.4, 0.92),
+      evidence: mfaGate.slice(0, 4).map((signal) => `${signal.accountLabel} is still blocked on MFA or security completion.`),
+      recommendedAction: "Ledger, Sheriff, and Welcome should convert security friction into a clear readiness checklist before deeper access is granted.",
+      assignedWorkerIds: ["ledger", "sheriff", "welcome"],
+      committeeId: chooseOperatorCommittee(["ledger", "sheriff", "welcome"]),
+      pillarIds: ["compliance-risk", "governance", "growth"],
+      archiveRef: mfaGate.find((signal) => signal.archiveRef)?.archiveRef,
+      status: "watch",
+      sourceEventIds: mfaGate.flatMap((signal) => signal.sourceEventIds).slice(0, 10),
+    });
+  }
+
+  return intelligence.sort((left, right) => (right.score + right.riskScore) - (left.score + left.riskScore));
+}
+
+function buildSunnyvaleInternalSnapshot(): SunnyvaleInternalSnapshot {
+  const telemetry = buildTelemetry();
+  const evaluationSignals = buildEvaluationSignals();
+  const growthOpportunities = buildGrowthOpportunities();
+  const fieldIntelligence = buildFieldIntelligenceSignals(evaluationSignals);
+  const liveWorkers = state.workerRuntime.filter((runtime) => runtime.status === "running" || minutesSince(runtime.lastHeartbeatAt) <= 20).length;
+  const seriousSignals =
+    evaluationSignals.filter((signal) => signal.riskScore >= 65 || signal.score >= 70).length +
+    growthOpportunities.filter((signal) => signal.score >= 75).length;
+
+  return {
+    mode: state.backendEvents.length > 0 ? "live" : state.researchSignals.length > 0 ? "research-only" : "waiting",
+    asOf: now(),
+    overview: {
+      totalSignals: evaluationSignals.length + growthOpportunities.length + fieldIntelligence.length,
+      activeEvaluations: evaluationSignals.length,
+      seriousSignals,
+      reserveBalance: state.backendSummary.reserveBalance,
+      workerConfidence: Math.round(telemetry.determinismScore * 100),
+      liveWorkers,
+      failedRoutes: state.backendSummary.failedRoutes,
+      evidenceExports: state.backendSummary.evidenceExports,
+      lastBackendEventAt: state.backendSummary.lastEventAt,
+    },
+    evaluationSignals,
+    growthOpportunities,
+    fieldIntelligence,
+  };
+}
+
 function workerInputSnapshot(worker: OperatorWorker) {
   const observability = buildEngineObservability();
   const telemetry = buildTelemetry();
@@ -3271,6 +3782,7 @@ async function startServer() {
   app.get("/api/backend-summary", (_req, res) => res.json(state.backendSummary));
   app.get("/api/backend-events", (_req, res) => res.json(state.backendEvents));
   app.get("/api/command-center", (_req, res) => res.json(buildCommandCenterSnapshot()));
+  app.get("/api/sunnyvale-internal", (_req, res) => res.json(buildSunnyvaleInternalSnapshot()));
   app.get("/api/research-signals", (_req, res) => res.json(state.researchSignals));
   app.get("/api/research-status", (_req, res) => res.json(state.researchStatus));
   app.get("/api/ssrn-signals", (_req, res) => res.json(toEngineSignals(state.researchSignals)));

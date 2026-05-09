@@ -369,6 +369,63 @@ export interface CommandCenterSnapshot {
   };
 }
 
+export type OperatingSignalKind = "evaluation" | "growth" | "field-intelligence";
+export type OperatingSignalStatus = "open" | "watch" | "escalated" | "ready";
+export type SunnyvaleDataMode = "live" | "research-only" | "waiting";
+
+export interface OperatingSignal {
+  id: string;
+  kind: OperatingSignalKind;
+  title: string;
+  summary: string;
+  category: string;
+  accountLabel: string;
+  workspaceId?: string;
+  tier?: string;
+  evaluationStage?: string;
+  lastActivityAt?: string;
+  runsUsed?: number;
+  runsLimit?: number;
+  endpointStatus?: string;
+  evidenceActivity?: string;
+  billingState?: string;
+  reserveState?: string;
+  mfaState?: string;
+  errorsCount?: number;
+  score: number;
+  riskScore: number;
+  confidence: number;
+  evidence: string[];
+  recommendedAction: string;
+  assignedWorkerIds: string[];
+  committeeId?: string;
+  pillarIds: string[];
+  archiveRef?: string;
+  status: OperatingSignalStatus;
+  sourceEventIds: string[];
+}
+
+export interface SunnyvaleOverview {
+  totalSignals: number;
+  activeEvaluations: number;
+  seriousSignals: number;
+  reserveBalance: number;
+  workerConfidence: number;
+  liveWorkers: number;
+  failedRoutes: number;
+  evidenceExports: number;
+  lastBackendEventAt?: string;
+}
+
+export interface SunnyvaleInternalSnapshot {
+  mode: SunnyvaleDataMode;
+  asOf: string;
+  overview: SunnyvaleOverview;
+  evaluationSignals: OperatingSignal[];
+  growthOpportunities: OperatingSignal[];
+  fieldIntelligence: OperatingSignal[];
+}
+
 export interface EngineSignal {
   id: string;
   title: string;
