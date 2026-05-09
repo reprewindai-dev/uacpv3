@@ -4641,6 +4641,12 @@ function buildLocalSunnyvaleInternalSnapshot(): SunnyvaleInternalSnapshot {
   return {
     mode: state.backendEvents.length > 0 ? "live" : state.researchSignals.length > 0 ? "research-only" : "waiting",
     asOf: now(),
+    source: "local-fallback",
+    bridgeStatus: {
+      enabled: false,
+      baseUrlConfigured: Boolean(UACP_BACKEND_BASE_URL),
+      internalKeyConfigured: Boolean(INTERNAL_API_KEY),
+    },
     overview: {
       totalSignals: evaluationSignals.length + growthOpportunities.length + fieldIntelligence.length,
       activeEvaluations: evaluationSignals.length,
@@ -4662,6 +4668,11 @@ async function buildSunnyvaleInternalSnapshot(): Promise<SunnyvaleInternalSnapsh
   const fallback = buildLocalSunnyvaleInternalSnapshot();
 
   if (!UACP_BACKEND_BASE_URL || !INTERNAL_API_KEY) {
+    fallback.bridgeStatus = {
+      enabled: false,
+      baseUrlConfigured: Boolean(UACP_BACKEND_BASE_URL),
+      internalKeyConfigured: Boolean(INTERNAL_API_KEY),
+    };
     return fallback;
   }
 
@@ -4701,13 +4712,26 @@ async function buildSunnyvaleInternalSnapshot(): Promise<SunnyvaleInternalSnapsh
     return {
       mode: "live",
       asOf: now(),
+      source: "backend-truth",
+      bridgeStatus: {
+        enabled: true,
+        baseUrlConfigured: true,
+        internalKeyConfigured: true,
+      },
       overview: mergeSunnyvaleOverview(fallback.overview, summaryEnvelope, evaluationSignals, growthOpportunities, fieldIntelligence),
       evaluationSignals,
       growthOpportunities,
       fieldIntelligence,
     };
   } catch (error) {
-    console.warn(`[uacp] sunnyvale backend bridge failed: ${error instanceof Error ? error.message : String(error)}`);
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[uacp] sunnyvale backend bridge failed: ${message}`);
+    fallback.bridgeStatus = {
+      enabled: false,
+      baseUrlConfigured: Boolean(UACP_BACKEND_BASE_URL),
+      internalKeyConfigured: Boolean(INTERNAL_API_KEY),
+      lastError: message,
+    };
     return fallback;
   }
 }

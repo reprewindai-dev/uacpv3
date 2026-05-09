@@ -504,7 +504,13 @@ function SunnyvaleSurface({
   const selectedIntelligence =
     intelligenceSignals.find((signal) => signal.id === selectedIntelligenceId) ?? intelligenceSignals[0];
   const dataMode = sunnyvaleInternal?.mode || "waiting";
-  const modeLabel = dataMode === "live" ? "live backend" : dataMode === "research-only" ? "research only" : "waiting";
+  const bridgeStatus = sunnyvaleInternal?.bridgeStatus;
+  const usingBackendTruth = sunnyvaleInternal?.source === "backend-truth";
+  const modeLabel = usingBackendTruth
+    ? "live backend"
+    : dataMode === "research-only"
+      ? "local fallback"
+      : "waiting";
   const liveRuns = runs.slice(0, 5);
 
   return (
@@ -597,7 +603,11 @@ function SunnyvaleSurface({
                     </div>
 
                     <div className="text-xs text-white/45">
-                      {sunnyvaleInternal.overview.lastBackendEventAt
+                      {!usingBackendTruth && bridgeStatus && !bridgeStatus.baseUrlConfigured
+                        ? "Sunnyvale is running in local fallback because the backend bridge URL is not configured on this runtime."
+                        : !usingBackendTruth && bridgeStatus && bridgeStatus.lastError
+                          ? `Sunnyvale backend bridge degraded: ${bridgeStatus.lastError}`
+                          : sunnyvaleInternal.overview.lastBackendEventAt
                         ? `Last backend truth arrived ${new Date(sunnyvaleInternal.overview.lastBackendEventAt).toLocaleString()}.`
                         : "Sunnyvale is waiting for normalized backend truth before it can rank real evaluation accounts."}
                     </div>
@@ -642,7 +652,11 @@ function SunnyvaleSurface({
                     <EmptyState
                       icon={<Users size={40} />}
                       title="No live evaluation queue yet"
-                      body="Sunnyvale will rank workspaces here once the backend starts sending evaluation, billing, endpoint, evidence, and security events into UACP."
+                      body={
+                        !usingBackendTruth && bridgeStatus && !bridgeStatus.baseUrlConfigured
+                          ? "Sunnyvale is still on local fallback. Configure UACP_BACKEND_BASE_URL on the runtime so Evaluation Surgeon can pull the protected backend queue."
+                          : "Sunnyvale will rank workspaces here once the backend starts sending evaluation, billing, endpoint, evidence, and security events into UACP."
+                      }
                     />
                   )}
                 </Panel>
@@ -673,7 +687,11 @@ function SunnyvaleSurface({
                     <EmptyState
                       icon={<ArrowUpRight size={40} />}
                       title="No qualified growth opportunities yet"
-                      body="Growth Navigator will populate when backend marketplace or integration events land, or when live research finds a concrete build path worth routing."
+                      body={
+                        !usingBackendTruth && bridgeStatus && !bridgeStatus.baseUrlConfigured
+                          ? "Sunnyvale is still on local fallback. Configure UACP_BACKEND_BASE_URL on the runtime so Hub Growth Navigator can pull the protected backend opportunity queue."
+                          : "Growth Navigator will populate when backend marketplace or integration events land, or when live research finds a concrete build path worth routing."
+                      }
                     />
                   )}
                 </Panel>
@@ -766,7 +784,11 @@ function SunnyvaleSurface({
                 <EmptyState
                   icon={<Users size={44} />}
                   title="Evaluation Surgeon is waiting for backend truth"
-                  body="Send real workspace, evaluation, endpoint, evidence, billing, and security events into `/api/v1/internal/backend/events` and UACP will rank them here."
+                  body={
+                    !usingBackendTruth && bridgeStatus && !bridgeStatus.baseUrlConfigured
+                      ? "This runtime does not have UACP_BACKEND_BASE_URL configured, so the protected Evaluation Surgeon queue cannot be pulled yet."
+                      : "Send real workspace, evaluation, endpoint, evidence, billing, and security events into `/api/v1/internal/backend/events` and UACP will rank them here."
+                  }
                 />
               )}
             </>
@@ -818,7 +840,11 @@ function SunnyvaleSurface({
                 <EmptyState
                   icon={<ArrowUpRight size={44} />}
                   title="No governed growth queue yet"
-                  body="Growth Navigator will populate when real marketplace, integration, buyer, vendor, or live research opportunities are available for UACP to route."
+                  body={
+                    !usingBackendTruth && bridgeStatus && !bridgeStatus.baseUrlConfigured
+                      ? "This runtime does not have UACP_BACKEND_BASE_URL configured, so the protected Hub Growth Navigator queue cannot be pulled yet."
+                      : "Growth Navigator will populate when real marketplace, integration, buyer, vendor, or live research opportunities are available for UACP to route."
+                  }
                 />
               )}
             </>

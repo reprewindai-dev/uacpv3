@@ -527,6 +527,13 @@ export interface SunnyvaleOverview {
 export interface SunnyvaleInternalSnapshot {
   mode: SunnyvaleDataMode;
   asOf: string;
+  source?: "backend-truth" | "local-fallback";
+  bridgeStatus?: {
+    enabled: boolean;
+    baseUrlConfigured: boolean;
+    internalKeyConfigured: boolean;
+    lastError?: string;
+  };
   overview: SunnyvaleOverview;
   evaluationSignals: OperatingSignal[];
   growthOpportunities: OperatingSignal[];
