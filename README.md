@@ -80,6 +80,7 @@ The root app does not use seeded plans, hardcoded research cards, or artificial 
 - `GET /api/command-center`
 - `GET /api/research-signals`
 - `GET /api/research-status`
+- `GET /api/provider-readiness`
 - `POST /api/research-refresh`
 - `GET /api/plans`
 - `POST /api/plans`
@@ -159,6 +160,19 @@ Copy `.env.example` to `.env` and set:
 ```bash
 PORT=3000
 GEMINI_API_KEY=
+GEMINI_MODEL=gemini-2.5-flash
+GROQ_API_KEY=
+GROQ_MODEL=llama-3.3-70b-versatile
+HF_TOKEN=
+HF_MODEL=openai/gpt-oss-120b
+HF_BASE_URL=https://router.huggingface.co/v1
+OLLAMA_BASE_URL=http://127.0.0.1:11434
+OLLAMA_MODEL=
+OLLAMA_API_KEY=
+UACP_MODEL_PROVIDER_ORDER=groq,ollama,huggingface
+UACP_MODEL_PROVIDER=
+UACP_ENABLE_GEMINI_PRIMARY=false
+ALLOW_GEMINI_FALLBACK=false
 USER_EMAIL=founder@company.com
 CONTACT_EMAIL=founder@company.com
 DEFAULT_RESEARCH_QUERY=ai governance orchestration workflow observability api mcp deployment compliance
@@ -167,7 +181,16 @@ UACP_ADMIN_KEY=
 UACP_INTERNAL_API_KEY=
 ```
 
-`GEMINI_API_KEY` is optional. If it is absent, the root app still compiles plans with the deterministic local planner, and that planner remains grounded in live public research.
+V3 now supports four model providers:
+
+- `Groq` via `GROQ_API_KEY`
+- `Hugging Face` via `HF_TOKEN`
+- `Ollama` via `OLLAMA_BASE_URL` + `OLLAMA_MODEL`
+- `Gemini` via `GEMINI_API_KEY`
+
+Default runtime order is `groq -> ollama -> huggingface`. Gemini is kept configured but is not primary unless you explicitly enable it with `UACP_ENABLE_GEMINI_PRIMARY=true`, set `ALLOW_GEMINI_FALLBACK=true`, or force it with `UACP_MODEL_PROVIDER=gemini`.
+
+If no external model provider is ready, the root app still compiles plans with the deterministic local planner grounded in live public research.
 
 `UACP_ADMIN_KEY` enables governed registry updates.
 
@@ -191,6 +214,19 @@ Required environment variables:
 Optional environment variables:
 
 - `GEMINI_API_KEY`
+- `GEMINI_MODEL`
+- `GROQ_API_KEY`
+- `GROQ_MODEL`
+- `HF_TOKEN`
+- `HF_MODEL`
+- `HF_BASE_URL`
+- `OLLAMA_BASE_URL`
+- `OLLAMA_MODEL`
+- `OLLAMA_API_KEY`
+- `UACP_MODEL_PROVIDER_ORDER`
+- `UACP_MODEL_PROVIDER`
+- `UACP_ENABLE_GEMINI_PRIMARY`
+- `ALLOW_GEMINI_FALLBACK`
 - `UACP_ADMIN_KEY`
 - `UACP_INTERNAL_API_KEY`
 - `DEFAULT_RESEARCH_QUERY`

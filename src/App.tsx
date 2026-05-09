@@ -33,6 +33,7 @@ import type {
   EventItem,
   GovernedRun,
   InstitutionalPlan,
+  ModelProviderSnapshot,
   OperatorCommittee,
   OperatingSignal,
   OperatorRun,
@@ -70,6 +71,7 @@ type DataState = {
   engineSignals: EngineSignal[];
   telemetry: ControlTelemetry | null;
   observability: EngineObservability | null;
+  providerSnapshot: ModelProviderSnapshot | null;
 };
 
 const initialState: DataState = {
@@ -95,6 +97,7 @@ const initialState: DataState = {
   engineSignals: [],
   telemetry: null,
   observability: null,
+  providerSnapshot: null,
 };
 
 const surfaceLabels: Record<SurfaceId, string> = {
@@ -125,8 +128,9 @@ export default function App() {
         fetchJson<BackendProductEvent[]>("/api/backend-events"),
         fetchJson<CommandCenterSnapshot>("/api/command-center"),
         fetchJson<SunnyvaleInternalSnapshot>("/api/sunnyvale-internal"),
+        fetchJson<ModelProviderSnapshot>("/api/provider-readiness"),
       ])
-        .then(([telemetry, observability, workerRuntime, operatorRuns, backendSummary, backendEvents, commandCenter, sunnyvaleInternal]) =>
+        .then(([telemetry, observability, workerRuntime, operatorRuns, backendSummary, backendEvents, commandCenter, sunnyvaleInternal, providerSnapshot]) =>
           setState((current) => ({
             ...current,
             telemetry,
@@ -137,6 +141,7 @@ export default function App() {
             backendEvents,
             commandCenter,
             sunnyvaleInternal,
+            providerSnapshot,
           })),
         )
         .catch(() => {});
@@ -180,6 +185,7 @@ export default function App() {
       backendEvents,
       commandCenter,
       sunnyvaleInternal,
+      providerSnapshot,
       plans,
       runs,
       events,
@@ -203,6 +209,7 @@ export default function App() {
       fetchJson<BackendProductEvent[]>("/api/backend-events"),
       fetchJson<CommandCenterSnapshot>("/api/command-center"),
       fetchJson<SunnyvaleInternalSnapshot>("/api/sunnyvale-internal"),
+      fetchJson<ModelProviderSnapshot>("/api/provider-readiness"),
       fetchJson<InstitutionalPlan[]>("/api/plans"),
       fetchJson<GovernedRun[]>("/api/runs"),
       fetchJson<EventItem[]>("/api/events"),
@@ -228,6 +235,7 @@ export default function App() {
       backendEvents,
       commandCenter,
       sunnyvaleInternal,
+      providerSnapshot,
       plans,
       runs,
       events,
@@ -374,6 +382,7 @@ export default function App() {
 
           <div className="flex items-center gap-3">
             <MetricPill label="Policy" value={`${percent(state.telemetry?.policyAlignment)}%`} />
+            <MetricPill label="LLM" value={providerLabel(state.providerSnapshot?.activeProvider)} />
             <MetricPill label="Committees" value={String(state.committees.length)} />
             <MetricPill label="Skills" value={String(approvedSkills)} />
           </div>
@@ -444,6 +453,7 @@ export default function App() {
                 backendSummary={state.backendSummary}
                 backendEvents={state.backendEvents}
                 commandCenter={state.commandCenter}
+                providerSnapshot={state.providerSnapshot}
                 researchStatus={state.researchStatus}
                 telemetry={state.telemetry}
                 observability={state.observability}
@@ -982,6 +992,7 @@ function SiliconValleySurface({
   backendSummary,
   backendEvents,
   commandCenter,
+  providerSnapshot,
   researchStatus,
   telemetry,
   observability,
@@ -996,6 +1007,7 @@ function SiliconValleySurface({
   backendSummary: BackendTruthSummary | null;
   backendEvents: BackendProductEvent[];
   commandCenter: CommandCenterSnapshot | null;
+  providerSnapshot: ModelProviderSnapshot | null;
   researchStatus: ResearchSourceStatus[];
   telemetry: ControlTelemetry | null;
   observability: EngineObservability | null;
@@ -1046,6 +1058,46 @@ function SiliconValleySurface({
               </div>
             ) : (
               <div className="text-sm text-white/45 italic">No backend truth has been ingested yet.</div>
+            )}
+          </Panel>
+
+          <Panel title="Model providers" icon={<BrainCircuit size={14} className="text-blue-400" />}>
+            {providerSnapshot ? (
+              <div className="space-y-4">
+                <div className="grid grid-cols-2 gap-3">
+                  <MiniStat icon={<BrainCircuit size={12} />} label="Primary" value={providerLabel(providerSnapshot.defaultProvider)} />
+                  <MiniStat icon={<Zap size={12} />} label="Active" value={providerLabel(providerSnapshot.activeProvider)} />
+                </div>
+                <div className="space-y-3">
+                  {providerSnapshot.statuses.map((provider) => (
+                    <div key={provider.id} className="p-4 rounded-xl border border-white/10 bg-white/[0.02]">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-white">{provider.label}</div>
+                        <div
+                          className={`text-[10px] font-mono uppercase tracking-[0.25em] ${
+                            provider.health === "ready"
+                              ? "text-green-400"
+                              : provider.health === "degraded"
+                                ? "text-amber-300"
+                                : provider.health === "missing"
+                                  ? "text-white/35"
+                                  : "text-blue-300"
+                          }`}
+                        >
+                          {provider.health}
+                        </div>
+                      </div>
+                      <div className="mt-2 text-sm text-white/55">{provider.detail}</div>
+                      <div className="mt-3 grid grid-cols-2 gap-3">
+                        <MiniStat icon={<Zap size={12} />} label="Model" value={provider.model || "n/a"} />
+                        <MiniStat icon={<Network size={12} />} label="Role" value={provider.active ? "active" : "standby"} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="text-sm text-white/45 italic">Provider readiness is still loading.</div>
             )}
           </Panel>
 
@@ -1651,6 +1703,23 @@ function upsertById<T extends { id: string }>(list: T[], item: T) {
 function percent(value?: number) {
   if (typeof value !== "number") return "0.0";
   return (Math.round(value * 1000) / 10).toFixed(1);
+}
+
+function providerLabel(provider?: string) {
+  switch (provider) {
+    case "groq":
+      return "Groq";
+    case "huggingface":
+      return "Hugging Face";
+    case "ollama":
+      return "Ollama";
+    case "gemini":
+      return "Gemini";
+    case "deterministic":
+      return "Deterministic";
+    default:
+      return "Unknown";
+  }
 }
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {

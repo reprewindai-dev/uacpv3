@@ -5,7 +5,7 @@ import { createServer } from "node:http";
 import path from "node:path";
 import cors from "cors";
 import express from "express";
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 import { XMLParser } from "fast-xml-parser";
 import { createServer as createViteServer } from "vite";
 import { WebSocket, WebSocketServer } from "ws";
@@ -26,6 +26,9 @@ import type {
   GovernanceRegistry,
   GovernedRun,
   OperatorCommittee,
+  ModelProviderId,
+  ModelProviderSnapshot,
+  ModelProviderStatus,
   OperatorRun,
   OperatorWorker,
   Pillar,
@@ -52,6 +55,23 @@ const REGISTRY_FILE = path.join(DATA_DIR, "governance-registry.json");
 const CONTROL_PLANE_BOOTED_AT = Date.now();
 const ADMIN_API_KEY = process.env.UACP_ADMIN_KEY || "";
 const INTERNAL_API_KEY = process.env.UACP_INTERNAL_API_KEY || ADMIN_API_KEY;
+const GROQ_BASE_URL = (process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1").replace(/\/+$/, "");
+const GROQ_API_KEY = process.env.GROQ_API_KEY || "";
+const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+const HF_BASE_URL = (process.env.HF_BASE_URL || "https://router.huggingface.co/v1").replace(/\/+$/, "");
+const HF_TOKEN = process.env.HF_TOKEN || process.env.HUGGING_FACE_HUB_TOKEN || process.env.HUGGINGFACE_API_KEY || "";
+const HF_MODEL = process.env.HF_MODEL || "openai/gpt-oss-120b";
+const OLLAMA_BASE_URL = (process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434").replace(/\/+$/, "");
+const OLLAMA_API_KEY = process.env.OLLAMA_API_KEY || "";
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "";
+const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const REQUESTED_MODEL_PROVIDER = String(process.env.UACP_MODEL_PROVIDER || "").toLowerCase();
+const GEMINI_PRIMARY_ENABLED = process.env.UACP_ENABLE_GEMINI_PRIMARY === "true";
+const ALLOW_GEMINI_FALLBACK = process.env.ALLOW_GEMINI_FALLBACK === "true";
+const MODEL_PROVIDER_ORDER = parseProviderOrder(
+  process.env.UACP_MODEL_PROVIDER_ORDER ||
+    (GEMINI_PRIMARY_ENABLED ? "groq,ollama,huggingface,gemini" : "groq,ollama,huggingface"),
+);
 const MAX_EVENTS = 120;
 const MAX_ARCHIVES = 80;
 const MAX_SIGNALS = 40;
@@ -138,6 +158,30 @@ const HEALTH_RESEARCH_TERMS = [
 
 const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
 const parser = new XMLParser({ ignoreAttributes: false });
+
+type ChatMessage = {
+  role: "system" | "user" | "assistant";
+  content: string;
+};
+
+type ProviderTextResponse = {
+  provider: ModelProviderId;
+  model: string;
+  text: string;
+};
+
+type ProviderPromptOptions = {
+  jsonMode?: boolean;
+  maxTokens?: number;
+  temperature?: number;
+};
+
+let providerSnapshotCache:
+  | {
+      snapshot: ModelProviderSnapshot;
+      fetchedAt: number;
+    }
+  | undefined;
 
 const surfaces: BootstrapPayload["surfaces"] = [
   { id: "deterministic-engine", name: "Deterministic Engine", purpose: "Live signal intake, graph compilation, and run telemetry." },
@@ -986,6 +1030,218 @@ function systemHasOperationalEvidenceInventory() {
   );
 }
 
+function parseProviderOrder(value: string): ModelProviderId[] {
+  const allowed = new Set<ModelProviderId>(["groq", "huggingface", "ollama", "gemini"]);
+  return uniqueStrings(
+    value
+      .split(/[,\s]+/)
+      .map((provider) => provider.trim().toLowerCase())
+      .filter((provider): provider is ModelProviderId => allowed.has(provider as ModelProviderId)),
+  ) as ModelProviderId[];
+}
+
+function providerLabel(provider: ModelProviderId) {
+  switch (provider) {
+    case "groq":
+      return "Groq";
+    case "huggingface":
+      return "Hugging Face";
+    case "ollama":
+      return "Ollama";
+    case "gemini":
+      return "Gemini";
+    default:
+      return "Deterministic";
+  }
+}
+
+function requestedProvider(): ModelProviderId | undefined {
+  if (!REQUESTED_MODEL_PROVIDER) return undefined;
+  return ["groq", "huggingface", "ollama", "gemini", "deterministic"].includes(REQUESTED_MODEL_PROVIDER)
+    ? REQUESTED_MODEL_PROVIDER as ModelProviderId
+    : undefined;
+}
+
+function providerConfigured(provider: Exclude<ModelProviderId, "deterministic">) {
+  switch (provider) {
+    case "groq":
+      return GROQ_API_KEY.length > 0;
+    case "huggingface":
+      return HF_TOKEN.length > 0;
+    case "ollama":
+      return OLLAMA_MODEL.length > 0;
+    case "gemini":
+      return Boolean(ai);
+  }
+}
+
+function providerModelName(provider: Exclude<ModelProviderId, "deterministic">) {
+  switch (provider) {
+    case "groq":
+      return GROQ_MODEL;
+    case "huggingface":
+      return HF_MODEL;
+    case "ollama":
+      return OLLAMA_MODEL;
+    case "gemini":
+      return GEMINI_MODEL;
+  }
+}
+
+function providerBaseUrl(provider: Exclude<ModelProviderId, "deterministic">) {
+  switch (provider) {
+    case "groq":
+      return GROQ_BASE_URL;
+    case "huggingface":
+      return HF_BASE_URL;
+    case "ollama":
+      return OLLAMA_BASE_URL;
+    case "gemini":
+      return undefined;
+  }
+}
+
+function providerPreferenceOrder(): Exclude<ModelProviderId, "deterministic">[] {
+  const order = [...MODEL_PROVIDER_ORDER];
+  const explicit = requestedProvider();
+  const normalized = order.filter((provider): provider is Exclude<ModelProviderId, "deterministic"> => provider !== "deterministic");
+  const baseOrder = explicit && explicit !== "deterministic"
+    ? [explicit, ...normalized.filter((provider) => provider !== explicit)]
+    : normalized;
+
+  if (explicit === "gemini" || GEMINI_PRIMARY_ENABLED || ALLOW_GEMINI_FALLBACK) {
+    return uniqueStrings([...baseOrder, "gemini"]) as Exclude<ModelProviderId, "deterministic">[];
+  }
+
+  return baseOrder.filter((provider) => provider !== "gemini");
+}
+
+function modelProviderCacheTtlMs() {
+  return 30_000;
+}
+
+async function checkOllamaReady() {
+  if (!OLLAMA_MODEL) {
+    return {
+      health: "missing" as const,
+      detail: "OLLAMA_MODEL is not configured.",
+    };
+  }
+
+  try {
+    const response = await fetch(`${OLLAMA_BASE_URL}/api/tags`, {
+      headers: OLLAMA_API_KEY ? { Authorization: `Bearer ${OLLAMA_API_KEY}` } : undefined,
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) {
+      return {
+        health: "degraded" as const,
+        detail: `Ollama responded ${response.status} ${response.statusText}.`,
+      };
+    }
+
+    const parsed = await response.json() as { models?: Array<{ name?: string; model?: string }> };
+    const knownModels = parsed.models ?? [];
+    const hasModel = knownModels.some((entry) => entry.name === OLLAMA_MODEL || entry.model === OLLAMA_MODEL);
+    return {
+      health: hasModel ? "ready" as const : "degraded" as const,
+      detail: hasModel
+        ? `Ollama is reachable and model ${OLLAMA_MODEL} is available.`
+        : `Ollama is reachable but model ${OLLAMA_MODEL} is not listed.`,
+    };
+  } catch (error) {
+    return {
+      health: "degraded" as const,
+      detail: error instanceof Error ? `Ollama unreachable: ${error.message}` : "Ollama unreachable.",
+    };
+  }
+}
+
+async function getProviderSnapshot(force = false): Promise<ModelProviderSnapshot> {
+  if (!force && providerSnapshotCache && Date.now() - providerSnapshotCache.fetchedAt < modelProviderCacheTtlMs()) {
+    return providerSnapshotCache.snapshot;
+  }
+
+  const explicit = requestedProvider();
+  const order = providerPreferenceOrder();
+  const geminiEnabled = explicit === "gemini" || GEMINI_PRIMARY_ENABLED || ALLOW_GEMINI_FALLBACK;
+  const ollamaState = await checkOllamaReady();
+
+  const statuses: ModelProviderStatus[] = [
+    {
+      id: "groq",
+      label: providerLabel("groq"),
+      health: GROQ_API_KEY ? "ready" : "missing",
+      configured: providerConfigured("groq"),
+      active: false,
+      model: providerModelName("groq"),
+      baseUrl: providerBaseUrl("groq"),
+      detail: GROQ_API_KEY
+        ? `Configured for OpenAI-compatible chat completions at ${GROQ_BASE_URL}.`
+        : "GROQ_API_KEY is missing.",
+    },
+    {
+      id: "huggingface",
+      label: providerLabel("huggingface"),
+      health: HF_TOKEN ? "ready" : "missing",
+      configured: providerConfigured("huggingface"),
+      active: false,
+      model: providerModelName("huggingface"),
+      baseUrl: providerBaseUrl("huggingface"),
+      detail: HF_TOKEN
+        ? `Configured for OpenAI-compatible inference routing at ${HF_BASE_URL}.`
+        : "HF_TOKEN is missing.",
+    },
+    {
+      id: "ollama",
+      label: providerLabel("ollama"),
+      health: ollamaState.health,
+      configured: providerConfigured("ollama"),
+      active: false,
+      model: providerModelName("ollama"),
+      baseUrl: providerBaseUrl("ollama"),
+      detail: ollamaState.detail,
+    },
+    {
+      id: "gemini",
+      label: providerLabel("gemini"),
+      health: ai ? (geminiEnabled ? "ready" : "disabled") : "missing",
+      configured: providerConfigured("gemini"),
+      active: false,
+      model: providerModelName("gemini"),
+      detail: ai
+        ? geminiEnabled
+          ? "Configured and eligible as a fallback model council provider."
+          : "Configured but held in reserve; Gemini is not primary in this runtime."
+        : "GEMINI_API_KEY is missing.",
+    },
+  ];
+
+  const readyLookup = new Map(statuses.map((status) => [status.id, status.health === "ready"]));
+  const activeProvider = explicit === "deterministic"
+    ? "deterministic"
+    : order.find((provider) => readyLookup.get(provider)) || "deterministic";
+  const defaultProvider = explicit || order[0] || "deterministic";
+
+  const snapshot: ModelProviderSnapshot = {
+    defaultProvider,
+    activeProvider,
+    allowGeminiFallback: ALLOW_GEMINI_FALLBACK || GEMINI_PRIMARY_ENABLED || explicit === "gemini",
+    updatedAt: now(),
+    statuses: statuses.map((status) => ({
+      ...status,
+      active: status.id === activeProvider,
+    })),
+  };
+
+  providerSnapshotCache = {
+    snapshot,
+    fetchedAt: Date.now(),
+  };
+
+  return snapshot;
+}
+
 function trimText(value: string, length: number) {
   const compact = value.replace(/\s+/g, " ").trim();
   return compact.length <= length ? compact : `${compact.slice(0, length - 3)}...`;
@@ -1155,6 +1411,200 @@ async function fetchJson<T>(url: string) {
     throw new Error(`${response.status} ${response.statusText}`);
   }
   return response.json() as Promise<T>;
+}
+
+async function fetchProviderJson<T>(url: string, init: RequestInit, timeoutMs = 20000) {
+  const response = await fetch(url, {
+    ...init,
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`${response.status} ${response.statusText}${body ? ` :: ${trimText(body, 220)}` : ""}`);
+  }
+  return response.json() as Promise<T>;
+}
+
+function stripMarkdownFences(text: string) {
+  return text
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim();
+}
+
+function extractJsonObject(text: string) {
+  const stripped = stripMarkdownFences(text);
+  if (stripped.startsWith("{") && stripped.endsWith("}")) {
+    return stripped;
+  }
+
+  const firstBrace = stripped.indexOf("{");
+  const lastBrace = stripped.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    return stripped.slice(firstBrace, lastBrace + 1);
+  }
+
+  return stripped;
+}
+
+function parseJsonObject<T>(text: string) {
+  return JSON.parse(extractJsonObject(text)) as T;
+}
+
+async function callGroq(messages: ChatMessage[], options: ProviderPromptOptions): Promise<ProviderTextResponse> {
+  const response = await fetchProviderJson<{
+    choices?: Array<{ message?: { content?: string } }>;
+  }>(`${GROQ_BASE_URL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${GROQ_API_KEY}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: GROQ_MODEL,
+      messages,
+      temperature: options.temperature ?? 0.2,
+      max_tokens: options.maxTokens ?? 2000,
+    }),
+  });
+
+  const text = response.choices?.[0]?.message?.content?.trim();
+  if (!text) {
+    throw new Error("Groq returned no message content.");
+  }
+
+  return {
+    provider: "groq",
+    model: GROQ_MODEL,
+    text,
+  };
+}
+
+async function callHuggingFace(messages: ChatMessage[], options: ProviderPromptOptions): Promise<ProviderTextResponse> {
+  const response = await fetchProviderJson<{
+    choices?: Array<{ message?: { content?: string } }>;
+  }>(`${HF_BASE_URL}/chat/completions`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${HF_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: HF_MODEL,
+      messages,
+      temperature: options.temperature ?? 0.2,
+      max_tokens: options.maxTokens ?? 2000,
+    }),
+  });
+
+  const text = response.choices?.[0]?.message?.content?.trim();
+  if (!text) {
+    throw new Error("Hugging Face returned no message content.");
+  }
+
+  return {
+    provider: "huggingface",
+    model: HF_MODEL,
+    text,
+  };
+}
+
+async function callOllama(messages: ChatMessage[], options: ProviderPromptOptions): Promise<ProviderTextResponse> {
+  const response = await fetchProviderJson<{
+    message?: { content?: string };
+  }>(`${OLLAMA_BASE_URL}/api/chat`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(OLLAMA_API_KEY ? { Authorization: `Bearer ${OLLAMA_API_KEY}` } : {}),
+    },
+    body: JSON.stringify({
+      model: OLLAMA_MODEL,
+      messages,
+      stream: false,
+      format: options.jsonMode ? "json" : undefined,
+      options: {
+        temperature: options.temperature ?? 0.2,
+      },
+      keep_alive: "10m",
+    }),
+  });
+
+  const text = response.message?.content?.trim();
+  if (!text) {
+    throw new Error("Ollama returned no message content.");
+  }
+
+  return {
+    provider: "ollama",
+    model: OLLAMA_MODEL,
+    text,
+  };
+}
+
+async function callGemini(messages: ChatMessage[]): Promise<ProviderTextResponse> {
+  if (!ai) {
+    throw new Error("Gemini is not configured.");
+  }
+
+  const prompt = messages
+    .map((message) => `${message.role.toUpperCase()}:\n${message.content}`)
+    .join("\n\n");
+
+  const result = await ai.models.generateContent({
+    model: GEMINI_MODEL,
+    contents: [
+      {
+        role: "user",
+        parts: [{ text: prompt }],
+      },
+    ],
+  });
+
+  const text = result.text?.trim();
+  if (!text) {
+    throw new Error("Gemini returned no message content.");
+  }
+
+  return {
+    provider: "gemini",
+    model: GEMINI_MODEL,
+    text,
+  };
+}
+
+async function completeWithProviderChain(messages: ChatMessage[], options: ProviderPromptOptions = {}) {
+  const snapshot = await getProviderSnapshot();
+  const explicit = requestedProvider();
+  const orderedProviders =
+    explicit && explicit !== "deterministic"
+      ? [explicit, ...providerPreferenceOrder().filter((provider) => provider !== explicit)]
+      : providerPreferenceOrder();
+
+  const errors: string[] = [];
+
+  for (const provider of orderedProviders) {
+    const status = snapshot.statuses.find((entry) => entry.id === provider);
+    if (!status || status.health !== "ready") {
+      continue;
+    }
+
+    try {
+      if (provider === "groq") return await callGroq(messages, options);
+      if (provider === "huggingface") return await callHuggingFace(messages, options);
+      if (provider === "ollama") return await callOllama(messages, options);
+      if (provider === "gemini") return await callGemini(messages);
+    } catch (error) {
+      errors.push(`${provider}: ${error instanceof Error ? error.message : "unknown error"}`);
+    }
+  }
+
+  if (errors.length > 0) {
+    console.warn("Model provider chain failed:", errors.join(" | "));
+  }
+
+  return null;
 }
 
 async function fetchArxivSignals(query: string, limit: number) {
@@ -1659,118 +2109,54 @@ async function generatePlan(intent: string): Promise<Omit<InstitutionalPlan, "id
   }
 
   const deterministicPlan = buildDeterministicPlan(intent, researchQuery, researchContext.signals);
-  if (!ai) {
-    return deterministicPlan;
-  }
-
   try {
     const referenceBlock = deterministicPlan.researchReferences
       ?.map((reference, index) => `${index + 1}. ${reference.source}: ${reference.title}`)
       .join("\n") || "No live references were available.";
 
-    const result = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: [
-        {
-          role: "user",
-          parts: [{
-            text: [
-              "Convert the founder intent into a UACP V3 institutional plan.",
-              `Intent: ${intent}`,
-              `Research query: ${researchQuery}`,
-              `Live references:\n${referenceBlock}`,
-              `Available pillars: ${activePillars().map((pillar) => pillar.id).join(", ")}`,
-              `Available committees: ${activeCommittees().map((committee) => committee.id).join(", ")}`,
-              `Available workflows: ${activeWorkflows().map((workflow) => workflow.id).join(", ")}`,
-              `Available approved skills: ${activeSkills().filter((skill) => skill.status === "approved").map((skill) => skill.id).join(", ")}`,
-              `Available escalation rules: ${activeEscalationRules().map((rule) => rule.id).join(", ")}`,
-              "Return an institutional plan grounded in the live references. Only activate listed registry objects. If you need a new committee, skill, or workflow, put it in proposals instead of the active selections.",
-            ].join("\n\n"),
-          }],
-        },
-      ],
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            title: { type: Type.STRING },
-            objective: { type: Type.STRING },
-            pricingModel: { type: Type.STRING },
-            payingUser: { type: Type.STRING },
-            riskTier: { type: Type.STRING, enum: ["low", "medium", "high", "critical"] },
-            pillars: { type: Type.ARRAY, items: { type: Type.STRING } },
-            committeeIds: { type: Type.ARRAY, items: { type: Type.STRING } },
-            workflowIds: { type: Type.ARRAY, items: { type: Type.STRING } },
-            skillIds: { type: Type.ARRAY, items: { type: Type.STRING } },
-            escalationRuleIds: { type: Type.ARRAY, items: { type: Type.STRING } },
-            graph: {
-              type: Type.OBJECT,
-              properties: {
-                nodes: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      id: { type: Type.STRING },
-                      label: { type: Type.STRING },
-                      stage: { type: Type.STRING, enum: ["intent", "reasoning", "governance", "execution", "evidence", "continuity"] },
-                      ownerCommitteeId: { type: Type.STRING },
-                      pillarIds: { type: Type.ARRAY, items: { type: Type.STRING } },
-                      summary: { type: Type.STRING },
-                      latencyMs: { type: Type.NUMBER },
-                    },
-                    required: ["id", "label", "stage", "ownerCommitteeId", "pillarIds", "summary", "latencyMs"],
-                  },
-                },
-                edges: {
-                  type: Type.ARRAY,
-                  items: {
-                    type: Type.OBJECT,
-                    properties: {
-                      from: { type: Type.STRING },
-                      to: { type: Type.STRING },
-                    },
-                    required: ["from", "to"],
-                  },
-                },
-              },
-              required: ["nodes", "edges"],
-            },
-            votes: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  member: { type: Type.STRING },
-                  model: { type: Type.STRING },
-                  vote: { type: Type.STRING, enum: ["approve", "challenge", "veto"] },
-                  rationale: { type: Type.STRING },
-                },
-                required: ["member", "model", "vote", "rationale"],
-              },
-            },
-            guardrails: { type: Type.ARRAY, items: { type: Type.STRING } },
-            successMetrics: { type: Type.ARRAY, items: { type: Type.STRING } },
-            proposals: {
-              type: Type.ARRAY,
-              items: {
-                type: Type.OBJECT,
-                properties: {
-                  type: { type: Type.STRING, enum: ["committee", "skill", "workflow"] },
-                  name: { type: Type.STRING },
-                  rationale: { type: Type.STRING },
-                },
-                required: ["type", "name", "rationale"],
-              },
-            },
-          },
-          required: ["title", "objective", "pricingModel", "payingUser", "riskTier", "pillars", "committeeIds", "workflowIds", "skillIds", "escalationRuleIds", "graph", "votes", "guardrails", "successMetrics"],
-        },
+    const providerResult = await completeWithProviderChain([
+      {
+        role: "system",
+        content: [
+          "You are the model council inside UACP V3.",
+          "Return strictly valid JSON only. No markdown fences. No prose outside the JSON object.",
+          "Only activate governance objects from the provided registry lists.",
+          "If a new committee, skill, or workflow is needed, put it under proposals instead of the active selections.",
+        ].join("\n"),
       },
+      {
+        role: "user",
+        content: [
+          "Convert the founder intent into a UACP V3 institutional plan.",
+          `Intent: ${intent}`,
+          `Research query: ${researchQuery}`,
+          `Live references:\n${referenceBlock}`,
+          `Available pillars: ${activePillars().map((pillar) => pillar.id).join(", ")}`,
+          `Available committees: ${activeCommittees().map((committee) => committee.id).join(", ")}`,
+          `Available workflows: ${activeWorkflows().map((workflow) => workflow.id).join(", ")}`,
+          `Available approved skills: ${activeSkills().filter((skill) => skill.status === "approved").map((skill) => skill.id).join(", ")}`,
+          `Available escalation rules: ${activeEscalationRules().map((rule) => rule.id).join(", ")}`,
+          [
+            "Return a JSON object with these keys:",
+            "title, objective, pricingModel, payingUser, riskTier, pillars, committeeIds, workflowIds, skillIds, escalationRuleIds, graph, votes, guardrails, successMetrics, proposals",
+            "graph must contain nodes and edges.",
+            "Each graph node must include id, label, stage, ownerCommitteeId, pillarIds, summary, latencyMs.",
+            "Each vote must include member, model, vote, rationale.",
+            "Each proposal must include type, name, rationale.",
+          ].join("\n"),
+        ].join("\n\n"),
+      },
+    ], {
+      jsonMode: true,
+      maxTokens: 2200,
+      temperature: 0.2,
     });
 
-    const parsed = JSON.parse(result.text || "{}");
+    if (!providerResult) {
+      return deterministicPlan;
+    }
+
+    const parsed = parseJsonObject<Record<string, unknown>>(providerResult.text);
     const modelProposals = sanitizeProposals(parsed.proposals);
     const inferredProposals = [
       ...collectUnknownIdProposals(parsed.committeeIds, activeCommittees().map((committee) => committee.id), "committee"),
@@ -1788,7 +2174,7 @@ async function generatePlan(intent: string): Promise<Omit<InstitutionalPlan, "id
       skillIds: sanitizeIds(parsed.skillIds, activeSkills().filter((skill) => skill.status === "approved").map((skill) => skill.id), deterministicPlan.skillIds),
       escalationRuleIds: sanitizeIds(parsed.escalationRuleIds, activeEscalationRules().map((rule) => rule.id), deterministicPlan.escalationRuleIds),
       graph: sanitizeGraph(parsed.graph, deterministicPlan.graph),
-      votes: sanitizeVotes(parsed.votes, deterministicPlan.votes),
+      votes: sanitizeVotes(parsed.votes, deterministicPlan.votes, providerResult.model),
       guardrails: sanitizeStrings(parsed.guardrails, deterministicPlan.guardrails),
       successMetrics: sanitizeStrings(parsed.successMetrics, deterministicPlan.successMetrics),
       researchQuery,
@@ -1813,14 +2199,16 @@ function sanitizeStrings(candidate: unknown, baseline: string[]) {
   return values.length > 0 ? values : baseline;
 }
 
-function sanitizeVotes(candidate: unknown, baseline: CommitteeVote[]) {
+function sanitizeVotes(candidate: unknown, baseline: CommitteeVote[], fallbackModel = "deterministic-council") {
   if (!Array.isArray(candidate)) return baseline;
-  const votes = candidate
+  const votes: CommitteeVote[] = candidate
     .filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
     .map((item) => ({
       member: trimText(String(item.member || "Committee"), 80),
-      model: trimText(String(item.model || "gemini-3-flash-preview"), 80),
-      vote: item.vote === "approve" || item.vote === "challenge" || item.vote === "veto" ? item.vote : "challenge",
+      model: trimText(String(item.model || fallbackModel), 80),
+      vote: item.vote === "approve" || item.vote === "challenge" || item.vote === "veto"
+        ? item.vote as CommitteeVote["vote"]
+        : "challenge",
       rationale: trimText(String(item.rationale || "No rationale provided."), 240),
     }));
   return votes.length > 0 ? votes : baseline;
@@ -3735,30 +4123,33 @@ function toEngineSignals(signals: ResearchSignal[]) {
 
 async function synthesizeCouncilSummary(plan: InstitutionalPlan, signals: ResearchSignal[]) {
   const references = signals.slice(0, 5).map((signal, index) => `${index + 1}. ${signal.source}: ${signal.title}`).join("\n");
-  if (!ai) {
-    return signals.length > 0
-      ? `Council reviewed ${signals.length} live sources and found the strongest evidence in ${uniqueStrings(signals.map((signal) => signal.source)).join(", ")}. Primary signals: ${signals.slice(0, 3).map((signal) => signal.title).join(" | ")}.`
-      : "Council proceeded without live research references and elevated the plan's uncertainty.";
-  }
-
   try {
-    const result = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: [
-        {
-          role: "user",
-          parts: [{
-            text: [
-              `Plan title: ${plan.title}`,
-              `Plan objective: ${plan.objective}`,
-              `References:\n${references || "No live references available."}`,
-              "Write a concise institutional council summary grounded in the references.",
-            ].join("\n\n"),
-          }],
-        },
-      ],
+    const providerResult = await completeWithProviderChain([
+      {
+        role: "system",
+        content: "You are the UACP V3 model council. Respond with concise institutional prose only.",
+      },
+      {
+        role: "user",
+        content: [
+          `Plan title: ${plan.title}`,
+          `Plan objective: ${plan.objective}`,
+          `References:\n${references || "No live references available."}`,
+          "Write a concise institutional council summary grounded in the references.",
+        ].join("\n\n"),
+      },
+    ], {
+      maxTokens: 500,
+      temperature: 0.2,
     });
-    return trimText(result.text || "", 700) || "Council summary unavailable.";
+
+    if (!providerResult) {
+      return signals.length > 0
+        ? `Council reviewed ${signals.length} live sources and found the strongest evidence in ${uniqueStrings(signals.map((signal) => signal.source)).join(", ")}. Primary signals: ${signals.slice(0, 3).map((signal) => signal.title).join(" | ")}.`
+        : "Council proceeded without live research references and elevated the plan's uncertainty.";
+    }
+
+    return trimText(providerResult.text || "", 700) || "Council summary unavailable.";
   } catch {
     return signals.length > 0
       ? `Council reviewed ${signals.length} live sources and found the strongest evidence in ${uniqueStrings(signals.map((signal) => signal.source)).join(", ")}.`
@@ -3987,6 +4378,7 @@ async function startServer() {
   await loadGovernanceRegistry();
   await loadState();
   await recordGovernanceRegistrySync("startup");
+  const providerSnapshot = await getProviderSnapshot(true);
   if (state.stats.determinismHistory.length === 0) {
     captureMetricHistory();
     await persistState();
@@ -4048,6 +4440,7 @@ async function startServer() {
   app.get("/api/sunnyvale-internal", (_req, res) => res.json(buildSunnyvaleInternalSnapshot()));
   app.get("/api/research-signals", (_req, res) => res.json(state.researchSignals));
   app.get("/api/research-status", (_req, res) => res.json(state.researchStatus));
+  app.get("/api/provider-readiness", async (_req, res) => res.json(await getProviderSnapshot()));
   app.get("/api/ssrn-signals", (_req, res) => res.json(toEngineSignals(state.researchSignals)));
   app.get("/api/plans", (_req, res) => res.json(state.plans));
   app.get("/api/runs", (_req, res) => res.json(state.runs));
@@ -4271,6 +4664,9 @@ async function startServer() {
 
   httpServer.listen(PORT, "0.0.0.0", () => {
     addEvent("SYSTEM_ONLINE", "UACP V3 constitutional control plane initialized with live research ingestion.", "silicon-valley");
+    console.log(
+      `Model providers: primary=${providerSnapshot.defaultProvider} active=${providerSnapshot.activeProvider} statuses=${providerSnapshot.statuses.map((status) => `${status.id}:${status.health}`).join(", ")}`,
+    );
     console.log(`UACP V3 running on http://localhost:${PORT}`);
   });
 }

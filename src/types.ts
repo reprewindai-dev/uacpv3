@@ -12,6 +12,8 @@ export type GovernanceProposalStatus = "proposed";
 export type OperatorRunStatus = "queued" | "running" | "completed" | "failed" | "paused" | "escalated";
 export type WorkerRuntimeStatus = "idle" | "running" | "paused" | "error";
 export type BackendEventSeverity = "info" | "warning" | "critical";
+export type ModelProviderId = "groq" | "huggingface" | "ollama" | "gemini" | "deterministic";
+export type ModelProviderHealth = "ready" | "degraded" | "missing" | "disabled";
 
 export interface PlanNode {
   id: string;
@@ -257,6 +259,25 @@ export interface BootstrapPayload {
   status?: string;
   identity?: string;
   userEmail?: string;
+}
+
+export interface ModelProviderStatus {
+  id: Exclude<ModelProviderId, "deterministic">;
+  label: string;
+  health: ModelProviderHealth;
+  configured: boolean;
+  active: boolean;
+  model?: string;
+  baseUrl?: string;
+  detail: string;
+}
+
+export interface ModelProviderSnapshot {
+  defaultProvider: ModelProviderId;
+  activeProvider: ModelProviderId;
+  allowGeminiFallback: boolean;
+  updatedAt: string;
+  statuses: ModelProviderStatus[];
 }
 
 export interface GovernanceRegistry {

@@ -16,6 +16,32 @@ services:
         value: founder@company.com
       - key: GEMINI_API_KEY
         sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: GROQ_API_KEY
+        sync: false
+      - key: GROQ_MODEL
+        value: llama-3.3-70b-versatile
+      - key: HF_TOKEN
+        sync: false
+      - key: HF_MODEL
+        value: openai/gpt-oss-120b
+      - key: HF_BASE_URL
+        value: https://router.huggingface.co/v1
+      - key: OLLAMA_BASE_URL
+        value: http://127.0.0.1:11434
+      - key: OLLAMA_MODEL
+        sync: false
+      - key: OLLAMA_API_KEY
+        sync: false
+      - key: UACP_MODEL_PROVIDER_ORDER
+        value: groq,ollama,huggingface
+      - key: UACP_MODEL_PROVIDER
+        value: ""
+      - key: UACP_ENABLE_GEMINI_PRIMARY
+        value: "false"
+      - key: ALLOW_GEMINI_FALLBACK
+        value: "false"
       - key: UACP_ADMIN_KEY
         sync: false
       - key: UACP_INTERNAL_API_KEY
