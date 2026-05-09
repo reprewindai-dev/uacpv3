@@ -17,6 +17,8 @@ const writeDotEnv = toBool(process.env.UPSTASH_BOX_WRITE_DOTENV, true);
 const waitAttempts = Number(process.env.UPSTASH_BOX_WAIT_ATTEMPTS || 24);
 const waitMs = Number(process.env.UPSTASH_BOX_WAIT_MS || 5000);
 const envFilePath = process.env.UPSTASH_BOX_ENV_FILE || "/workspace/home/uacpv3/.env";
+const boxDatabaseUrl = process.env.UACP_BOX_DATABASE_URL || process.env.DATABASE_URL || "";
+const boxDatabaseSslMode = process.env.UACP_BOX_DATABASE_SSL_MODE || process.env.DATABASE_SSL_MODE || "";
 
 if (!apiKey) {
   throw new Error("Missing UPSTASH_BOX_API_KEY.");
@@ -127,6 +129,7 @@ console.log(
         mode: health?.runtime?.mode,
         workerGroup: health?.runtime?.workerGroup,
         internalApiKeySource,
+        storage: health?.runtime?.storage || null,
       },
       bootstrap: {
         system: bootstrap?.system,
@@ -264,7 +267,16 @@ async function writeRuntimeDotEnv() {
     UACP_ARCHIVE_WRITE_REQUIRED: process.env.UACP_ARCHIVE_WRITE_REQUIRED || "true",
   };
 
+  if (boxDatabaseUrl) {
+    runtimeEnv.DATABASE_URL = boxDatabaseUrl;
+  }
+  if (boxDatabaseSslMode) {
+    runtimeEnv.DATABASE_SSL_MODE = boxDatabaseSslMode;
+  }
+
   for (const key of [
+    "DATABASE_URL",
+    "DATABASE_SSL_MODE",
     "GEMINI_API_KEY",
     "GEMINI_MODEL",
     "GROQ_API_KEY",
@@ -281,6 +293,7 @@ async function writeRuntimeDotEnv() {
     "UACP_ADMIN_KEY",
     "DEFAULT_RESEARCH_QUERY",
     "DATA_DIR",
+    "UACP_COLD_STORAGE_DIR",
   ]) {
     if (process.env[key]) {
       runtimeEnv[key] = process.env[key];

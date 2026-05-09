@@ -222,6 +222,13 @@ If no external model provider is ready, the root app still compiles plans with t
 
 `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, and optional `UACP_OUTBOUND_REPLY_TO` enable governed outbound email sends for worker-backed outreach. The live outbound summary is exposed in `GET /api/outbound/runtime`, and full queue/message inspection is available on the protected internal routes.
 
+`DATABASE_URL` and optional `DATABASE_SSL_MODE` enable Postgres-backed hot storage for runtime state and governance registry. V3 keeps file fallback and also writes compressed cold snapshots under `UACP_COLD_STORAGE_DIR` so the database stays small while replayable state remains recoverable.
+
+For infrastructure split:
+
+- Render web service should use the Render-internal database URL.
+- Upstash Box should use `UACP_BOX_DATABASE_URL` if the internal Render hostname is not reachable from the Box.
+
 `UACP_RATE_LIMIT_TRUST_ACCESS_TIER_HEADER=false` keeps all public callers on the free tier unless you explicitly trust an upstream gateway to set `x-uacp-access-tier` and `x-uacp-user-id`.
 
 Public mutation profiles:
@@ -269,6 +276,11 @@ Optional environment variables:
 - `RESEND_FROM_EMAIL`
 - `UACP_OUTBOUND_REPLY_TO`
 - `UACP_OUTBOUND_MAX_SENDS_PER_RUN`
+- `DATABASE_URL`
+- `DATABASE_SSL_MODE`
+- `UACP_COLD_STORAGE_DIR`
+- `UACP_BOX_DATABASE_URL`
+- `UACP_BOX_DATABASE_SSL_MODE`
 - `UACP_RATE_LIMIT_TRUST_ACCESS_TIER_HEADER`
 - `UACP_RATE_LIMIT_PUBLIC_FREE_LIMIT`
 - `UACP_RATE_LIMIT_PUBLIC_PAID_LIMIT`
@@ -317,6 +329,12 @@ Health and verification endpoints:
 - `GET /api/v1/internal/outbound/contacts` with header `x-uacp-internal-key: $UACP_INTERNAL_API_KEY`
 - `GET /api/v1/internal/outbound/messages` with header `x-uacp-internal-key: $UACP_INTERNAL_API_KEY`
 
+Storage model:
+
+- hot: in-memory runtime state
+- warm: Postgres via `DATABASE_URL`
+- cold: compressed snapshots in `UACP_COLD_STORAGE_DIR`
+
 If `UACP_INTERNAL_API_KEY` is unset, the internal operator endpoints remain intentionally disabled.
 
 If you want to drive the Box from your local machine with the Upstash Box SDK, use:
@@ -330,6 +348,7 @@ That script reads:
 - `UPSTASH_BOX_API_KEY`
 - `UPSTASH_BOX_ID` or `UPSTASH_BOX_NAME`
 - `UACP_INTERNAL_API_KEY`
+- `UACP_BOX_DATABASE_URL` when the Box cannot reach the Render-internal Postgres hostname
 
 It will connect to the Box, ensure the pillar-council init command, resume or restart the Box when needed, and verify:
 

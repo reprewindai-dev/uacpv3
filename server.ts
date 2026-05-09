@@ -3,9 +3,11 @@ import crypto from "node:crypto";
 import { promises as fs } from "node:fs";
 import { createServer } from "node:http";
 import path from "node:path";
+import { gzipSync, gunzipSync } from "node:zlib";
 import cors from "cors";
 import express from "express";
 import { GoogleGenAI } from "@google/genai";
+import pg from "pg";
 import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
 import { XMLParser } from "fast-xml-parser";
@@ -86,8 +88,11 @@ const PORT = Number(process.env.PORT || 3000);
 const TOOL_NAME = "uacpv3-control-plane";
 const CONTACT_EMAIL = process.env.CONTACT_EMAIL || process.env.USER_EMAIL || "founder@uacp.local";
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), "data");
+const COLD_STORAGE_DIR = process.env.UACP_COLD_STORAGE_DIR || path.join(DATA_DIR, "cold-store");
 const STATE_FILE = path.join(DATA_DIR, "control-plane-state.json");
 const REGISTRY_FILE = path.join(DATA_DIR, "governance-registry.json");
+const STATE_SNAPSHOT_FILE = path.join(COLD_STORAGE_DIR, "runtime-state.snapshot.json.gz");
+const REGISTRY_SNAPSHOT_FILE = path.join(COLD_STORAGE_DIR, "governance-registry.snapshot.json.gz");
 const CONTROL_PLANE_BOOTED_AT = Date.now();
 const ADMIN_API_KEY = process.env.UACP_ADMIN_KEY || "";
 const INTERNAL_API_KEY = process.env.UACP_INTERNAL_API_KEY || ADMIN_API_KEY;
@@ -103,6 +108,8 @@ const RESEND_API_KEY = process.env.RESEND_API_KEY || "";
 const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "";
 const UACP_OUTBOUND_REPLY_TO = process.env.UACP_OUTBOUND_REPLY_TO || "";
 const UACP_OUTBOUND_MAX_SENDS_PER_RUN = Math.max(1, Number(process.env.UACP_OUTBOUND_MAX_SENDS_PER_RUN || 2) || 2);
+const DATABASE_URL = process.env.DATABASE_URL || "";
+const DATABASE_SSL_MODE = (process.env.DATABASE_SSL_MODE || "require").trim().toLowerCase();
 const UPSTASH_REDIS_REST_URL = process.env.UPSTASH_REDIS_REST_URL || "";
 const UPSTASH_REDIS_REST_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || "";
 const RATE_LIMIT_TRUST_ACCESS_TIER_HEADER = /^(1|true|yes|on)$/i.test(
@@ -118,6 +125,7 @@ const OLLAMA_BASE_URL = (process.env.OLLAMA_BASE_URL || "http://127.0.0.1:11434"
 const OLLAMA_API_KEY = process.env.OLLAMA_API_KEY || "";
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
+const { Pool } = pg;
 const REQUESTED_MODEL_PROVIDER = String(process.env.UACP_MODEL_PROVIDER || "").toLowerCase();
 const GEMINI_PRIMARY_ENABLED = process.env.UACP_ENABLE_GEMINI_PRIMARY === "true";
 const ALLOW_GEMINI_FALLBACK = process.env.ALLOW_GEMINI_FALLBACK === "true";
@@ -1058,6 +1066,14 @@ type RuntimeState = {
   stats: RuntimeStats;
 };
 
+type StorageRuntimeStatus = {
+  configured: boolean;
+  provider: "postgres" | "file";
+  connected: boolean;
+  mode: "postgres+file-fallback" | "file-only";
+  lastError: string | null;
+};
+
 type ResearchFetchResult = {
   signals: ResearchSignal[];
   statuses: ResearchSourceStatus[];
@@ -1382,6 +1398,9 @@ function logStartupContext(providerSnapshot: ModelProviderSnapshot) {
   );
   console.log("[uacp] operator scheduler enabled: true");
   console.log(`[uacp] archive/data dir: ${DATA_DIR}`);
+  console.log(
+    `[uacp] storage: provider=${storageRuntime.provider} configured=${storageRuntime.configured} connected=${storageRuntime.connected} mode=${storageRuntime.mode} coldStore=${COLD_STORAGE_DIR}`,
+  );
   console.log(
     `[uacp] provider readiness: default=${providerSnapshot.defaultProvider} active=${providerSnapshot.activeProvider} statuses=${providerStatuses} internalApi=${INTERNAL_API_KEY ? "ready" : "disabled"} adminApi=${ADMIN_API_KEY ? "ready" : "disabled"} archiveWrite=${ARCHIVE_WRITE_REQUIRED ? "required" : "optional"} workerGroup=${WORKER_GROUP}`,
   );
@@ -1905,6 +1924,220 @@ const clients = new Set<WebSocket>();
 let state: RuntimeState = emptyState();
 let persistQueue = Promise.resolve();
 let governanceRegistry: GovernanceRegistry = cloneRegistry(defaultGovernanceRegistry);
+let dbPool: pg.Pool | null = null;
+let dbReadyPromise: Promise<boolean> | null = null;
+const storageRuntime: StorageRuntimeStatus = {
+  configured: Boolean(DATABASE_URL),
+  provider: DATABASE_URL ? "postgres" : "file",
+  connected: false,
+  mode: DATABASE_URL ? "postgres+file-fallback" : "file-only",
+  lastError: null,
+};
+
+function databaseSslConfig() {
+  if (!DATABASE_URL) return undefined;
+  if (DATABASE_SSL_MODE === "disable" || DATABASE_SSL_MODE === "off" || DATABASE_SSL_MODE === "false") {
+    return false;
+  }
+  return { rejectUnauthorized: false };
+}
+
+function hashPayload(payload: Record<string, unknown>) {
+  return crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+}
+
+function latestEventHash() {
+  return state.events[0]?.recordHash;
+}
+
+function latestArchiveHash() {
+  return state.archives[0]?.recordHash;
+}
+
+function buildEventRecordHash(entry: Omit<EventItem, "recordHash">) {
+  return hashPayload({
+    id: entry.id,
+    type: entry.type,
+    timestamp: entry.timestamp,
+    message: entry.message,
+    surface: entry.surface,
+    metadata: entry.metadata || null,
+    previousHash: entry.previousHash || null,
+  });
+}
+
+function buildArchiveRecordHash(entry: Omit<ArchiveEntry, "recordHash">) {
+  return hashPayload({
+    id: entry.id,
+    title: entry.title,
+    category: entry.category,
+    summary: entry.summary,
+    createdAt: entry.createdAt,
+    lineage: entry.lineage,
+    metadata: entry.metadata || null,
+    previousHash: entry.previousHash || null,
+  });
+}
+
+function normalizeEventHashChain() {
+  let previousHash: string | undefined;
+  const normalized = [...state.events]
+    .reverse()
+    .map((event) => {
+      const next: EventItem = {
+        ...event,
+        previousHash,
+      };
+      next.recordHash = buildEventRecordHash({
+        id: next.id,
+        type: next.type,
+        timestamp: next.timestamp,
+        message: next.message,
+        surface: next.surface,
+        metadata: next.metadata,
+        previousHash: next.previousHash,
+      });
+      previousHash = next.recordHash;
+      return next;
+    })
+    .reverse();
+  state.events = normalized;
+}
+
+function normalizeArchiveHashChain() {
+  let previousHash: string | undefined;
+  const normalized = [...state.archives]
+    .reverse()
+    .map((archive) => {
+      const next: ArchiveEntry = {
+        ...archive,
+        previousHash,
+      };
+      next.recordHash = buildArchiveRecordHash({
+        id: next.id,
+        title: next.title,
+        category: next.category,
+        summary: next.summary,
+        createdAt: next.createdAt,
+        lineage: next.lineage,
+        metadata: next.metadata,
+        previousHash: next.previousHash,
+      });
+      previousHash = next.recordHash;
+      return next;
+    })
+    .reverse();
+  state.archives = normalized;
+}
+
+async function ensureDataDir() {
+  await fs.mkdir(DATA_DIR, { recursive: true });
+}
+
+async function ensureColdStorageDir() {
+  await fs.mkdir(COLD_STORAGE_DIR, { recursive: true });
+}
+
+async function ensureDatabase() {
+  if (!DATABASE_URL) {
+    storageRuntime.connected = false;
+    return false;
+  }
+
+  if (dbReadyPromise) {
+    return dbReadyPromise;
+  }
+
+  dbReadyPromise = (async () => {
+    try {
+      if (!dbPool) {
+        dbPool = new Pool({
+          connectionString: DATABASE_URL,
+          ssl: databaseSslConfig(),
+          max: 4,
+        });
+      }
+
+      await dbPool.query(`
+        create table if not exists uacp_state_store (
+          store_key text primary key,
+          payload jsonb not null,
+          updated_at timestamptz not null default now()
+        )
+      `);
+
+      storageRuntime.connected = true;
+      storageRuntime.lastError = null;
+      return true;
+    } catch (error) {
+      storageRuntime.connected = false;
+      storageRuntime.lastError = error instanceof Error ? error.message : "Unknown Postgres initialization error.";
+      console.error("Postgres initialization error:", error);
+      return false;
+    } finally {
+      dbReadyPromise = null;
+    }
+  })();
+
+  return dbReadyPromise;
+}
+
+async function readDatabaseStore<T>(storeKey: string): Promise<T | null> {
+  if (!(await ensureDatabase()) || !dbPool) {
+    return null;
+  }
+
+  try {
+    const result = await dbPool.query<{ payload: T }>("select payload from uacp_state_store where store_key = $1 limit 1", [storeKey]);
+    return result.rows[0]?.payload ?? null;
+  } catch (error) {
+    storageRuntime.connected = false;
+    storageRuntime.lastError = error instanceof Error ? error.message : "Unknown Postgres read error.";
+    console.error(`Postgres read error for ${storeKey}:`, error);
+    return null;
+  }
+}
+
+async function writeDatabaseStore(storeKey: string, payload: unknown) {
+  if (!(await ensureDatabase()) || !dbPool) {
+    return false;
+  }
+
+  try {
+    await dbPool.query(
+      `
+        insert into uacp_state_store (store_key, payload, updated_at)
+        values ($1, $2::jsonb, now())
+        on conflict (store_key)
+        do update set payload = excluded.payload, updated_at = excluded.updated_at
+      `,
+      [storeKey, JSON.stringify(payload)],
+    );
+    storageRuntime.connected = true;
+    storageRuntime.lastError = null;
+    return true;
+  } catch (error) {
+    storageRuntime.connected = false;
+    storageRuntime.lastError = error instanceof Error ? error.message : "Unknown Postgres write error.";
+    console.error(`Postgres write error for ${storeKey}:`, error);
+    return false;
+  }
+}
+
+async function writeCompressedSnapshot(targetFile: string, payload: unknown) {
+  await ensureColdStorageDir();
+  const buffer = gzipSync(Buffer.from(JSON.stringify(payload), "utf8"), { level: 9 });
+  await fs.writeFile(targetFile, buffer);
+}
+
+async function readCompressedSnapshot<T>(targetFile: string): Promise<T | null> {
+  try {
+    const buffer = await fs.readFile(targetFile);
+    return JSON.parse(gunzipSync(buffer).toString("utf8")) as T;
+  } catch {
+    return null;
+  }
+}
 
 const veklomPillars: VeklomPillar[] = [
   {
@@ -3738,13 +3971,21 @@ function sanitizeGraph(candidate: any, baseline: InstitutionalPlan["graph"]): In
 }
 
 function addEvent(type: string, message: string, surface: SurfaceId, metadata?: Record<string, unknown>) {
-  const event: EventItem = {
+  const eventBase: Omit<EventItem, "recordHash"> = {
     id: createId("evt"),
     type,
     message,
     timestamp: now(),
     surface,
     metadata,
+  };
+  const event: EventItem = {
+    ...eventBase,
+    previousHash: latestEventHash(),
+    recordHash: buildEventRecordHash({
+      ...eventBase,
+      previousHash: latestEventHash(),
+    }),
   };
   state.events = [event, ...state.events].slice(0, MAX_EVENTS);
   broadcast({ type: "event", data: event });
@@ -3753,10 +3994,18 @@ function addEvent(type: string, message: string, surface: SurfaceId, metadata?: 
 }
 
 function addArchive(entry: Omit<ArchiveEntry, "id" | "createdAt">) {
-  const archive: ArchiveEntry = {
+  const archiveBase: Omit<ArchiveEntry, "recordHash"> = {
     id: createId("arc"),
     createdAt: now(),
     ...entry,
+  };
+  const archive: ArchiveEntry = {
+    ...archiveBase,
+    previousHash: latestArchiveHash(),
+    recordHash: buildArchiveRecordHash({
+      ...archiveBase,
+      previousHash: latestArchiveHash(),
+    }),
   };
   state.archives = [archive, ...state.archives].slice(0, MAX_ARCHIVES);
   broadcast({ type: "archive", data: archive });
@@ -5422,75 +5671,96 @@ function ingestBackendEvent(candidate: unknown) {
   return event;
 }
 
+function hydrateRuntimeState(parsed?: Partial<RuntimeState> | null) {
+  state = {
+    plans: Array.isArray(parsed?.plans) ? parsed.plans : [],
+    runs: Array.isArray(parsed?.runs) ? parsed.runs : [],
+    operatorRuns: Array.isArray(parsed?.operatorRuns) ? parsed.operatorRuns : [],
+    workerRuntime: Array.isArray(parsed?.workerRuntime) ? parsed.workerRuntime : [],
+    backendEvents: Array.isArray(parsed?.backendEvents) ? parsed.backendEvents : [],
+    backendSummary: parsed?.backendSummary && typeof parsed.backendSummary === "object"
+      ? {
+          ...emptyBackendTruthSummary(),
+          ...parsed.backendSummary,
+        }
+      : emptyBackendTruthSummary(),
+    events: Array.isArray(parsed?.events) ? parsed.events : [],
+    archives: Array.isArray(parsed?.archives) ? parsed.archives : [],
+    v3Plans: Array.isArray(parsed?.v3Plans) ? parsed.v3Plans : [],
+    v3Runs: Array.isArray(parsed?.v3Runs) ? parsed.v3Runs : [],
+    v3Events: Array.isArray(parsed?.v3Events) ? parsed.v3Events : [],
+    v3Archives: Array.isArray(parsed?.v3Archives) ? parsed.v3Archives : [],
+    v3ReplayRequests: Array.isArray(parsed?.v3ReplayRequests) ? parsed.v3ReplayRequests : [],
+    v3ReplayResults: Array.isArray(parsed?.v3ReplayResults) ? parsed.v3ReplayResults : [],
+    v3CommercialArtifacts: Array.isArray(parsed?.v3CommercialArtifacts) ? parsed.v3CommercialArtifacts : [],
+    v3CommercialScorecard: parsed?.v3CommercialScorecard && typeof parsed.v3CommercialScorecard === "object"
+      ? {
+          ...emptyCommercialScorecard(),
+          ...parsed.v3CommercialScorecard,
+          lastUpdatedAt: typeof parsed.v3CommercialScorecard.lastUpdatedAt === "string"
+            ? parsed.v3CommercialScorecard.lastUpdatedAt
+            : now(),
+        }
+      : emptyCommercialScorecard(),
+    researchSignals: Array.isArray(parsed?.researchSignals) ? parsed.researchSignals : [],
+    researchStatus: Array.isArray(parsed?.researchStatus) ? parsed.researchStatus : [],
+    outboundContacts: Array.isArray(parsed?.outboundContacts) ? parsed.outboundContacts : [],
+    outboundMessages: Array.isArray(parsed?.outboundMessages) ? parsed.outboundMessages : [],
+    stats: {
+      planCompileDurationsMs: Array.isArray(parsed?.stats?.planCompileDurationsMs) ? parsed.stats?.planCompileDurationsMs : [],
+      runDurationsMs: Array.isArray(parsed?.stats?.runDurationsMs) ? parsed.stats?.runDurationsMs : [],
+      researchRefreshDurationsMs: Array.isArray(parsed?.stats?.researchRefreshDurationsMs) ? parsed.stats?.researchRefreshDurationsMs : [],
+      determinismHistory: Array.isArray(parsed?.stats?.determinismHistory) ? parsed.stats?.determinismHistory : [],
+      runCompletionHistory: Array.isArray(parsed?.stats?.runCompletionHistory) ? parsed.stats?.runCompletionHistory : [],
+      policyAlignmentHistory: Array.isArray(parsed?.stats?.policyAlignmentHistory) ? parsed.stats?.policyAlignmentHistory : [],
+      archiveCoverageHistory: Array.isArray(parsed?.stats?.archiveCoverageHistory) ? parsed.stats?.archiveCoverageHistory : [],
+      sourceHealthHistory: Array.isArray(parsed?.stats?.sourceHealthHistory) ? parsed.stats?.sourceHealthHistory : [],
+      pressureHistory: Array.isArray(parsed?.stats?.pressureHistory) ? parsed.stats?.pressureHistory : [],
+      lastResearchSyncAt: parsed?.stats?.lastResearchSyncAt,
+      lastGovernanceRegistryHash: parsed?.stats?.lastGovernanceRegistryHash,
+      lastGovernanceRegistrySyncAt: parsed?.stats?.lastGovernanceRegistrySyncAt,
+    },
+  };
+  normalizeEventHashChain();
+  normalizeArchiveHashChain();
+  normalizeV3AuditState();
+  syncWorkerRuntimeState();
+  normalizeWorkerRuntimeForStartup();
+}
+
 async function loadState() {
   try {
-    const raw = await fs.readFile(STATE_FILE, "utf8");
-    const parsed = JSON.parse(raw) as Partial<RuntimeState>;
-    state = {
-      plans: Array.isArray(parsed.plans) ? parsed.plans : [],
-      runs: Array.isArray(parsed.runs) ? parsed.runs : [],
-      operatorRuns: Array.isArray(parsed.operatorRuns) ? parsed.operatorRuns : [],
-      workerRuntime: Array.isArray(parsed.workerRuntime) ? parsed.workerRuntime : [],
-      backendEvents: Array.isArray(parsed.backendEvents) ? parsed.backendEvents : [],
-      backendSummary: parsed.backendSummary && typeof parsed.backendSummary === "object"
-        ? {
-            ...emptyBackendTruthSummary(),
-            ...parsed.backendSummary,
-          }
-        : emptyBackendTruthSummary(),
-      events: Array.isArray(parsed.events) ? parsed.events : [],
-      archives: Array.isArray(parsed.archives) ? parsed.archives : [],
-      v3Plans: Array.isArray(parsed.v3Plans) ? parsed.v3Plans : [],
-      v3Runs: Array.isArray(parsed.v3Runs) ? parsed.v3Runs : [],
-      v3Events: Array.isArray(parsed.v3Events) ? parsed.v3Events : [],
-      v3Archives: Array.isArray(parsed.v3Archives) ? parsed.v3Archives : [],
-      v3ReplayRequests: Array.isArray(parsed.v3ReplayRequests) ? parsed.v3ReplayRequests : [],
-      v3ReplayResults: Array.isArray(parsed.v3ReplayResults) ? parsed.v3ReplayResults : [],
-      v3CommercialArtifacts: Array.isArray((parsed as RuntimeState).v3CommercialArtifacts) ? (parsed as RuntimeState).v3CommercialArtifacts : [],
-      v3CommercialScorecard: parsed.v3CommercialScorecard && typeof parsed.v3CommercialScorecard === "object"
-        ? {
-            ...emptyCommercialScorecard(),
-            ...parsed.v3CommercialScorecard,
-            lastUpdatedAt: typeof parsed.v3CommercialScorecard.lastUpdatedAt === "string"
-              ? parsed.v3CommercialScorecard.lastUpdatedAt
-              : now(),
-          }
-        : emptyCommercialScorecard(),
-      researchSignals: Array.isArray(parsed.researchSignals) ? parsed.researchSignals : [],
-      researchStatus: Array.isArray(parsed.researchStatus) ? parsed.researchStatus : [],
-      outboundContacts: Array.isArray(parsed.outboundContacts) ? parsed.outboundContacts : [],
-      outboundMessages: Array.isArray(parsed.outboundMessages) ? parsed.outboundMessages : [],
-      stats: {
-        planCompileDurationsMs: Array.isArray(parsed.stats?.planCompileDurationsMs) ? parsed.stats?.planCompileDurationsMs : [],
-        runDurationsMs: Array.isArray(parsed.stats?.runDurationsMs) ? parsed.stats?.runDurationsMs : [],
-        researchRefreshDurationsMs: Array.isArray(parsed.stats?.researchRefreshDurationsMs) ? parsed.stats?.researchRefreshDurationsMs : [],
-        determinismHistory: Array.isArray(parsed.stats?.determinismHistory) ? parsed.stats?.determinismHistory : [],
-        runCompletionHistory: Array.isArray(parsed.stats?.runCompletionHistory) ? parsed.stats?.runCompletionHistory : [],
-        policyAlignmentHistory: Array.isArray(parsed.stats?.policyAlignmentHistory) ? parsed.stats?.policyAlignmentHistory : [],
-        archiveCoverageHistory: Array.isArray(parsed.stats?.archiveCoverageHistory) ? parsed.stats?.archiveCoverageHistory : [],
-        sourceHealthHistory: Array.isArray(parsed.stats?.sourceHealthHistory) ? parsed.stats?.sourceHealthHistory : [],
-        pressureHistory: Array.isArray(parsed.stats?.pressureHistory) ? parsed.stats?.pressureHistory : [],
-        lastResearchSyncAt: parsed.stats?.lastResearchSyncAt,
-        lastGovernanceRegistryHash: parsed.stats?.lastGovernanceRegistryHash,
-        lastGovernanceRegistrySyncAt: parsed.stats?.lastGovernanceRegistrySyncAt,
-      },
-    };
-    normalizeV3AuditState();
-    syncWorkerRuntimeState();
-    normalizeWorkerRuntimeForStartup();
+    const databaseState = await readDatabaseStore<Partial<RuntimeState>>("runtime_state");
+    if (databaseState) {
+      hydrateRuntimeState(databaseState);
+      return;
+    }
   } catch {
-    state = emptyState();
-    normalizeV3AuditState();
-    syncWorkerRuntimeState();
-    normalizeWorkerRuntimeForStartup();
+    // file fallback remains available below
+  }
+
+  try {
+    const raw = await fs.readFile(STATE_FILE, "utf8");
+    hydrateRuntimeState(JSON.parse(raw) as Partial<RuntimeState>);
+    return;
+  } catch {
+    const snapshotState = await readCompressedSnapshot<Partial<RuntimeState>>(STATE_SNAPSHOT_FILE);
+    hydrateRuntimeState(snapshotState || emptyState());
   }
 }
 
 function persistState() {
   persistQueue = persistQueue
     .then(async () => {
-      await fs.mkdir(DATA_DIR, { recursive: true });
-      await fs.writeFile(STATE_FILE, JSON.stringify(state, null, 2), "utf8");
+      await ensureDataDir();
+      const writes = [
+        fs.writeFile(STATE_FILE, JSON.stringify(state, null, 2), "utf8"),
+        writeCompressedSnapshot(STATE_SNAPSHOT_FILE, state),
+      ];
+      if (DATABASE_URL) {
+        writes.unshift(writeDatabaseStore("runtime_state", state).then(() => undefined));
+      }
+      await Promise.allSettled(writes);
     })
     .catch((error) => {
       console.error("State persistence error:", error);
@@ -7728,8 +7998,15 @@ function governanceRegistryHash(registry: GovernanceRegistry) {
 }
 
 async function persistGovernanceRegistry() {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(REGISTRY_FILE, JSON.stringify(governanceRegistry, null, 2), "utf8");
+  await ensureDataDir();
+  const writes = [
+    fs.writeFile(REGISTRY_FILE, JSON.stringify(governanceRegistry, null, 2), "utf8"),
+    writeCompressedSnapshot(REGISTRY_SNAPSHOT_FILE, governanceRegistry),
+  ];
+  if (DATABASE_URL) {
+    writes.unshift(writeDatabaseStore("governance_registry", governanceRegistry).then(() => undefined));
+  }
+  await Promise.allSettled(writes);
 }
 
 async function recordGovernanceRegistrySync(reason: string) {
@@ -7767,12 +8044,27 @@ async function recordGovernanceRegistrySync(reason: string) {
 }
 
 async function loadGovernanceRegistry() {
-  await fs.mkdir(DATA_DIR, { recursive: true });
+  await ensureDataDir();
+
+  try {
+    const storedRegistry = await readDatabaseStore<GovernanceRegistry>("governance_registry");
+    if (storedRegistry) {
+      governanceRegistry = validateGovernanceRegistry(storedRegistry);
+      return;
+    }
+  } catch {
+    // file and cold-storage fallbacks remain available below
+  }
 
   try {
     const raw = await fs.readFile(REGISTRY_FILE, "utf8");
     governanceRegistry = validateGovernanceRegistry(JSON.parse(raw));
   } catch (error) {
+    const snapshotRegistry = await readCompressedSnapshot<GovernanceRegistry>(REGISTRY_SNAPSHOT_FILE);
+    if (snapshotRegistry) {
+      governanceRegistry = validateGovernanceRegistry(snapshotRegistry);
+      return;
+    }
     if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
       governanceRegistry = cloneRegistry(defaultGovernanceRegistry);
       await persistGovernanceRegistry();
@@ -8756,6 +9048,14 @@ async function startServer() {
         archiveWriteRequired: ARCHIVE_WRITE_REQUIRED,
         schedulerEnabled: true,
         dataDir: DATA_DIR,
+        storage: {
+          ...storageRuntime,
+          coldStorageDir: COLD_STORAGE_DIR,
+        },
+        auditChain: {
+          eventHeadHash: latestEventHash() || null,
+          archiveHeadHash: latestArchiveHash() || null,
+        },
         backendBridge: {
           enabled: Boolean(UACP_BACKEND_BASE_URL && INTERNAL_API_KEY),
           baseUrlConfigured: Boolean(UACP_BACKEND_BASE_URL),

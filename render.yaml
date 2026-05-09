@@ -50,6 +50,12 @@ services:
         sync: false
       - key: UACP_BACKEND_TIMEOUT_MS
         value: "8000"
+      - key: DATABASE_URL
+        sync: false
+      - key: DATABASE_SSL_MODE
+        value: "require"
+      - key: UACP_COLD_STORAGE_DIR
+        value: /opt/render/project/src/data/cold-store
       - key: RESEND_API_KEY
         sync: false
       - key: RESEND_FROM_EMAIL

@@ -91,6 +91,8 @@ export interface EventItem {
   message: string;
   surface: SurfaceId;
   metadata?: Record<string, unknown>;
+  previousHash?: string;
+  recordHash?: string;
 }
 
 export interface Pillar {
@@ -176,6 +178,8 @@ export interface ArchiveEntry {
   createdAt: string;
   lineage: string[];
   metadata?: Record<string, unknown>;
+  previousHash?: string;
+  recordHash?: string;
 }
 
 export interface GovernanceProposal {
