@@ -61,7 +61,79 @@ const RESEARCH_REFRESH_INTERVAL_MS = 1000 * 60 * 15;
 const OPERATOR_TICK_INTERVAL_MS = 1000 * 60;
 const DEFAULT_RESEARCH_QUERY =
   process.env.DEFAULT_RESEARCH_QUERY ||
-  "governance agents orchestration workflow committees skills institutional control plane";
+  "ai governance orchestration workflow observability api mcp deployment compliance";
+const CORE_RESEARCH_ANCHORS = [
+  "ai",
+  "agent",
+  "agents",
+  "llm",
+  "model",
+  "orchestration",
+  "workflow",
+  "governance",
+  "observability",
+  "automation",
+  "api",
+  "sdk",
+  "cli",
+  "mcp",
+  "deployment",
+  "compliance",
+  "privacy",
+  "security",
+  "audit",
+];
+const GENERAL_AI_RESEARCH_ANCHORS = [
+  "ai",
+  "agent",
+  "agents",
+  "llm",
+  "model",
+  "automation",
+];
+const CONTROL_PLANE_RESEARCH_ANCHORS = [
+  "orchestration",
+  "workflow",
+  "governance",
+  "observability",
+  "automation",
+  "api",
+  "sdk",
+  "cli",
+  "mcp",
+  "deployment",
+  "compliance",
+  "privacy",
+  "security",
+  "audit",
+];
+const CORE_RESEARCH_PHRASES = [
+  "control plane",
+  "ai agent",
+  "agentic workflow",
+  "multi agent",
+  "workflow orchestration",
+  "policy enforcement",
+  "model context protocol",
+  "api integration",
+  "software deployment",
+  "enterprise ai",
+  "evaluation workflow",
+];
+const HEALTH_RESEARCH_TERMS = [
+  "medical",
+  "clinical",
+  "patient",
+  "therapy",
+  "drug",
+  "diagnosis",
+  "hospital",
+  "biomedical",
+  "hipaa",
+  "pubmed",
+  "medrxiv",
+  "health",
+];
 
 const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
 const parser = new XMLParser({ ignoreAttributes: false });
@@ -891,33 +963,93 @@ function tokenize(text: string) {
     "build", "create", "make", "want", "need", "plan", "system", "teams", "team", "serious",
     "then", "they", "them", "their", "there", "have", "will", "what", "when", "where",
   ]);
+  const shortTokens = new Set(["ai", "ml", "ui", "ux"]);
 
   return uniqueStrings(
     text
       .toLowerCase()
       .replace(/[^a-z0-9\s-]/g, " ")
       .split(/\s+/)
-      .filter((token) => token.length > 2 && !stopwords.has(token)),
+      .filter((token) => (token.length > 2 || shortTokens.has(token)) && !stopwords.has(token)),
   );
 }
 
+function normalizeSearchText(text: string) {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function countTokenMatches(tokens: string[], haystack: string) {
+  const haystackTokens = new Set(tokenize(haystack));
+  return tokens.filter((token) => haystackTokens.has(token)).length;
+}
+
+function countPhraseMatches(phrases: string[], haystack: string) {
+  const normalized = normalizeSearchText(haystack);
+  return phrases.filter((phrase) => normalized.includes(phrase)).length;
+}
+
+function shouldUsePubMed(query: string) {
+  const normalized = normalizeSearchText(query);
+  return HEALTH_RESEARCH_TERMS.some((term) => normalized.includes(term));
+}
+
+function buildResearchTokens(text: string) {
+  const tokens = tokenize(text);
+  return uniqueStrings([...tokens, ...CORE_RESEARCH_ANCHORS]).slice(0, 12);
+}
+
 function buildResearchQuery(text: string) {
-  const tokens = tokenize(text).slice(0, 8);
+  const tokens = buildResearchTokens(text);
   return tokens.length > 0 ? tokens.join(" ") : DEFAULT_RESEARCH_QUERY;
 }
 
 function textRelevance(tokens: string[], haystack: string) {
-  if (tokens.length === 0) return 0.25;
-  const normalized = haystack.toLowerCase();
-  const matches = tokens.filter((token) => normalized.includes(token)).length;
+  if (tokens.length === 0) return 0.15;
+  const matches = countTokenMatches(tokens, haystack);
   return matches / tokens.length;
 }
 
 function computeSignalStrength(sourceBias: number, query: string, signalText: string, publishedAt: string) {
-  const tokens = tokenize(query);
-  const relevance = textRelevance(tokens, signalText);
+  const queryTokens = tokenize(query).slice(0, 10);
+  const queryCoverage = textRelevance(queryTokens, signalText);
+  const generalCoverage = clamp(countTokenMatches(GENERAL_AI_RESEARCH_ANCHORS, signalText) / 3, 0, 1);
+  const controlCoverage = clamp(countTokenMatches(CONTROL_PLANE_RESEARCH_ANCHORS, signalText) / 2, 0, 1);
+  const phraseCoverage = clamp(countPhraseMatches(CORE_RESEARCH_PHRASES, signalText) / 2, 0, 1);
+  const domainFit = clamp(
+    (queryCoverage * 0.2) + (generalCoverage * 0.15) + (controlCoverage * 0.45) + (phraseCoverage * 0.2),
+    0,
+    1,
+  );
   const recency = clamp(1 - daysSince(publishedAt) / 365, 0, 1);
-  return Math.round(clamp((relevance * 55) + (recency * 25) + sourceBias, 10, 99));
+  return Math.round(clamp(25 + (domainFit * 50) + (recency * 10) + (sourceBias * 0.75), 10, 99));
+}
+
+function isRelevantResearchSignal(query: string, signal: ResearchSignal) {
+  const headlineText = `${signal.title} ${signal.category}`;
+  const searchText = `${signal.title} ${signal.abstract || ""} ${signal.category} ${(signal.authors || []).join(" ")}`;
+  const queryTokens = tokenize(query).slice(0, 10);
+  const queryCoverage = textRelevance(queryTokens, searchText);
+  const generalMatchCount = countTokenMatches(GENERAL_AI_RESEARCH_ANCHORS, searchText);
+  const controlMatchCount = countTokenMatches(CONTROL_PLANE_RESEARCH_ANCHORS, searchText);
+  const headlineGeneralMatches = countTokenMatches(GENERAL_AI_RESEARCH_ANCHORS, headlineText);
+  const headlineControlMatches = countTokenMatches(CONTROL_PLANE_RESEARCH_ANCHORS, headlineText);
+  const generalCoverage = clamp(generalMatchCount / 3, 0, 1);
+  const controlCoverage = clamp(controlMatchCount / 2, 0, 1);
+  const phraseCoverage = clamp(countPhraseMatches(CORE_RESEARCH_PHRASES, searchText) / 2, 0, 1);
+  const headlinePhraseMatches = countPhraseMatches(CORE_RESEARCH_PHRASES, headlineText);
+  const domainFit = clamp(
+    (queryCoverage * 0.2) + (generalCoverage * 0.15) + (controlCoverage * 0.45) + (phraseCoverage * 0.2),
+    0,
+    1,
+  );
+  const hasInstitutionalSignal = headlineControlMatches >= 1 || headlinePhraseMatches > 0;
+  const hasEnoughCoverage = (headlineGeneralMatches >= 1 && headlineControlMatches >= 1) || headlinePhraseMatches > 0;
+
+  return hasInstitutionalSignal && hasEnoughCoverage && domainFit >= 0.18 && signal.strength >= 48;
 }
 
 function toReference(signal: ResearchSignal): CompiledArtifactReference {
@@ -978,10 +1110,10 @@ async function fetchJson<T>(url: string) {
 async function fetchArxivSignals(query: string, limit: number) {
   const startedAt = Date.now();
   try {
-    const tokens = tokenize(query).slice(0, 6);
+    const tokens = buildResearchTokens(query).slice(0, 8);
     const searchQuery = tokens.length > 0
-      ? `all:(${tokens.map((token) => `"${token}"`).join(" AND ")})`
-      : `all:(${DEFAULT_RESEARCH_QUERY.split(" ").slice(0, 5).join(" AND ")})`;
+      ? `all:(${tokens.map((token) => `"${token}"`).join(" OR ")})`
+      : `all:(${buildResearchTokens(DEFAULT_RESEARCH_QUERY).slice(0, 6).map((token) => `"${token}"`).join(" OR ")})`;
     const xml = await fetchText(
       `https://export.arxiv.org/api/query?search_query=${encodeURIComponent(searchQuery)}&start=0&max_results=${limit}&sortBy=lastUpdatedDate&sortOrder=descending`,
     );
@@ -1177,16 +1309,25 @@ async function fetchZenodoSignals(query: string, limit: number) {
 
 async function fetchLiveResearch(query: string, limitPerSource = 4): Promise<ResearchFetchResult> {
   const startedAt = Date.now();
-  const results = await Promise.all([
-    fetchArxivSignals(query, limitPerSource),
-    fetchPubMedSignals(query, limitPerSource),
-    fetchCrossrefSignals(query, limitPerSource),
-    fetchZenodoSignals(query, limitPerSource),
-  ]);
+  const rawLimit = Math.max(limitPerSource, 4) * 3;
+  const sourceFetches = [
+    fetchArxivSignals(query, rawLimit),
+    fetchCrossrefSignals(query, rawLimit),
+    fetchZenodoSignals(query, rawLimit),
+  ];
+
+  if (shouldUsePubMed(query)) {
+    sourceFetches.push(fetchPubMedSignals(query, rawLimit));
+  }
+
+  const results = await Promise.all(sourceFetches);
 
   const deduped = new Map<string, ResearchSignal>();
   for (const result of results) {
     for (const signal of result.signals) {
+      if (!isRelevantResearchSignal(query, signal)) {
+        continue;
+      }
       const key = signal.doi || signal.url || `${signal.source}:${signal.title.toLowerCase()}`;
       const existing = deduped.get(key);
       if (!existing || byRecencyAndStrength(signal, existing) < 0) {
