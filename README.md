@@ -184,6 +184,15 @@ UACP_BOX_NAME=uacp-pillar-council
 UACP_RUNTIME_MODE=pillar_council
 UACP_WORKER_GROUP=pillar_council
 UACP_ARCHIVE_WRITE_REQUIRED=true
+UPSTASH_REDIS_REST_URL=
+UPSTASH_REDIS_REST_TOKEN=
+UACP_RATE_LIMIT_TRUST_ACCESS_TIER_HEADER=false
+UACP_RATE_LIMIT_PUBLIC_FREE_LIMIT=10
+UACP_RATE_LIMIT_PUBLIC_PAID_LIMIT=60
+UACP_RATE_LIMIT_HEAVY_FREE_LIMIT=3
+UACP_RATE_LIMIT_HEAVY_PAID_LIMIT=20
+UACP_RATE_LIMIT_REFRESH_FREE_LIMIT=2
+UACP_RATE_LIMIT_REFRESH_PAID_LIMIT=12
 ```
 
 V3 now supports four model providers:
@@ -204,6 +213,18 @@ If no external model provider is ready, the root app still compiles plans with t
 `UACP_BOX_NAME`, `UACP_RUNTIME_MODE`, and `UACP_WORKER_GROUP` give a Box or worker runtime a clean identity without changing the full server behavior.
 
 `UACP_ARCHIVE_WRITE_REQUIRED=true` marks this runtime as archive-writing infrastructure. The server logs that requirement at startup but does not print secrets.
+
+`UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` enable production rate limiting for public mutation routes through Upstash Redis.
+
+`UACP_RATE_LIMIT_TRUST_ACCESS_TIER_HEADER=false` keeps all public callers on the free tier unless you explicitly trust an upstream gateway to set `x-uacp-access-tier` and `x-uacp-user-id`.
+
+Public mutation profiles:
+
+- `public_mutation`: free `10/10s`, paid `60/10s`
+- `heavy_mutation`: free `3/1m`, paid `20/1m`
+- `refresh`: free `2/1m`, paid `12/1m`
+
+The live rate-limit state is exposed in `GET /api/health` under `runtime.rateLimit`.
 
 ## Render deployment
 
@@ -236,6 +257,15 @@ Optional environment variables:
 - `UACP_MODEL_PROVIDER`
 - `UACP_ENABLE_GEMINI_PRIMARY`
 - `ALLOW_GEMINI_FALLBACK`
+- `UPSTASH_REDIS_REST_URL`
+- `UPSTASH_REDIS_REST_TOKEN`
+- `UACP_RATE_LIMIT_TRUST_ACCESS_TIER_HEADER`
+- `UACP_RATE_LIMIT_PUBLIC_FREE_LIMIT`
+- `UACP_RATE_LIMIT_PUBLIC_PAID_LIMIT`
+- `UACP_RATE_LIMIT_HEAVY_FREE_LIMIT`
+- `UACP_RATE_LIMIT_HEAVY_PAID_LIMIT`
+- `UACP_RATE_LIMIT_REFRESH_FREE_LIMIT`
+- `UACP_RATE_LIMIT_REFRESH_PAID_LIMIT`
 - `UACP_ADMIN_KEY`
 - `UACP_INTERNAL_API_KEY`
 - `DEFAULT_RESEARCH_QUERY`

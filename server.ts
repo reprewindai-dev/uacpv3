@@ -6,6 +6,8 @@ import path from "node:path";
 import cors from "cors";
 import express from "express";
 import { GoogleGenAI } from "@google/genai";
+import { Ratelimit } from "@upstash/ratelimit";
+import { Redis } from "@upstash/redis";
 import { XMLParser } from "fast-xml-parser";
 import { createServer as createViteServer } from "vite";
 import { WebSocket, WebSocketServer } from "ws";
@@ -89,6 +91,11 @@ const BOX_NAME = process.env.UACP_BOX_NAME || TOOL_NAME;
 const RUNTIME_MODE = process.env.UACP_RUNTIME_MODE || "control_plane";
 const WORKER_GROUP = process.env.UACP_WORKER_GROUP || "control_plane";
 const ARCHIVE_WRITE_REQUIRED = /^(1|true|yes|on)$/i.test(process.env.UACP_ARCHIVE_WRITE_REQUIRED || "");
+const UPSTASH_REDIS_REST_URL = process.env.UPSTASH_REDIS_REST_URL || "";
+const UPSTASH_REDIS_REST_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || "";
+const RATE_LIMIT_TRUST_ACCESS_TIER_HEADER = /^(1|true|yes|on)$/i.test(
+  process.env.UACP_RATE_LIMIT_TRUST_ACCESS_TIER_HEADER || "",
+);
 const GROQ_BASE_URL = (process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1").replace(/\/+$/, "");
 const GROQ_API_KEY = process.env.GROQ_API_KEY || "";
 const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
@@ -193,6 +200,17 @@ const HEALTH_RESEARCH_TERMS = [
 const ai = process.env.GEMINI_API_KEY ? new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY }) : null;
 const parser = new XMLParser({ ignoreAttributes: false });
 
+type RateLimitTier = "free" | "paid";
+type RateLimitProfile = "public_mutation" | "heavy_mutation" | "refresh";
+type RateLimitWindow = Parameters<typeof Ratelimit.slidingWindow>[1];
+type RateLimitStatus = {
+  enabled: boolean;
+  provider: "upstash-redis" | "disabled";
+  trustTierHeader: boolean;
+  initError: string | null;
+  profiles: Record<RateLimitProfile, { free: { limit: number; window: RateLimitWindow }; paid: { limit: number; window: RateLimitWindow } }>;
+};
+
 type ChatMessage = {
   role: "system" | "user" | "assistant";
   content: string;
@@ -216,6 +234,47 @@ let providerSnapshotCache:
       fetchedAt: number;
     }
   | undefined;
+
+const rateLimitProfiles = {
+  public_mutation: {
+    free: {
+      limit: parsePositiveIntegerEnv(process.env.UACP_RATE_LIMIT_PUBLIC_FREE_LIMIT, 10),
+      window: (process.env.UACP_RATE_LIMIT_PUBLIC_FREE_WINDOW || "10 s") as RateLimitWindow,
+      prefix: "ratelimit:public:free",
+    },
+    paid: {
+      limit: parsePositiveIntegerEnv(process.env.UACP_RATE_LIMIT_PUBLIC_PAID_LIMIT, 60),
+      window: (process.env.UACP_RATE_LIMIT_PUBLIC_PAID_WINDOW || "10 s") as RateLimitWindow,
+      prefix: "ratelimit:public:paid",
+    },
+  },
+  heavy_mutation: {
+    free: {
+      limit: parsePositiveIntegerEnv(process.env.UACP_RATE_LIMIT_HEAVY_FREE_LIMIT, 3),
+      window: (process.env.UACP_RATE_LIMIT_HEAVY_FREE_WINDOW || "1 m") as RateLimitWindow,
+      prefix: "ratelimit:heavy:free",
+    },
+    paid: {
+      limit: parsePositiveIntegerEnv(process.env.UACP_RATE_LIMIT_HEAVY_PAID_LIMIT, 20),
+      window: (process.env.UACP_RATE_LIMIT_HEAVY_PAID_WINDOW || "1 m") as RateLimitWindow,
+      prefix: "ratelimit:heavy:paid",
+    },
+  },
+  refresh: {
+    free: {
+      limit: parsePositiveIntegerEnv(process.env.UACP_RATE_LIMIT_REFRESH_FREE_LIMIT, 2),
+      window: (process.env.UACP_RATE_LIMIT_REFRESH_FREE_WINDOW || "1 m") as RateLimitWindow,
+      prefix: "ratelimit:refresh:free",
+    },
+    paid: {
+      limit: parsePositiveIntegerEnv(process.env.UACP_RATE_LIMIT_REFRESH_PAID_LIMIT, 12),
+      window: (process.env.UACP_RATE_LIMIT_REFRESH_PAID_WINDOW || "1 m") as RateLimitWindow,
+      prefix: "ratelimit:refresh:paid",
+    },
+  },
+} satisfies Record<RateLimitProfile, Record<RateLimitTier, { limit: number; window: string; prefix: string }>>;
+
+const rateLimitRuntime = initializeRateLimitRuntime();
 
 const surfaces: BootstrapPayload["surfaces"] = [
   { id: "deterministic-engine", name: "Deterministic Engine", purpose: "Live signal intake, graph compilation, and run telemetry." },
@@ -7101,6 +7160,236 @@ function requireInternal(req: express.Request, res: express.Response, next: expr
   next();
 }
 
+function parsePositiveIntegerEnv(value: string | undefined, fallback: number) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
+
+function initializeRateLimitRuntime() {
+  if (!UPSTASH_REDIS_REST_URL || !UPSTASH_REDIS_REST_TOKEN) {
+    return {
+      redis: null,
+      limiters: null,
+      status: buildRateLimitStatus(null),
+    };
+  }
+
+  try {
+    const redis = new Redis({
+      url: UPSTASH_REDIS_REST_URL,
+      token: UPSTASH_REDIS_REST_TOKEN,
+    });
+
+    const limiters = {
+      public_mutation: {
+        free: new Ratelimit({
+          redis,
+          analytics: true,
+          prefix: rateLimitProfiles.public_mutation.free.prefix,
+          limiter: Ratelimit.slidingWindow(
+            rateLimitProfiles.public_mutation.free.limit,
+            rateLimitProfiles.public_mutation.free.window,
+          ),
+        }),
+        paid: new Ratelimit({
+          redis,
+          analytics: true,
+          prefix: rateLimitProfiles.public_mutation.paid.prefix,
+          limiter: Ratelimit.slidingWindow(
+            rateLimitProfiles.public_mutation.paid.limit,
+            rateLimitProfiles.public_mutation.paid.window,
+          ),
+        }),
+      },
+      heavy_mutation: {
+        free: new Ratelimit({
+          redis,
+          analytics: true,
+          prefix: rateLimitProfiles.heavy_mutation.free.prefix,
+          limiter: Ratelimit.slidingWindow(
+            rateLimitProfiles.heavy_mutation.free.limit,
+            rateLimitProfiles.heavy_mutation.free.window,
+          ),
+        }),
+        paid: new Ratelimit({
+          redis,
+          analytics: true,
+          prefix: rateLimitProfiles.heavy_mutation.paid.prefix,
+          limiter: Ratelimit.slidingWindow(
+            rateLimitProfiles.heavy_mutation.paid.limit,
+            rateLimitProfiles.heavy_mutation.paid.window,
+          ),
+        }),
+      },
+      refresh: {
+        free: new Ratelimit({
+          redis,
+          analytics: true,
+          prefix: rateLimitProfiles.refresh.free.prefix,
+          limiter: Ratelimit.slidingWindow(
+            rateLimitProfiles.refresh.free.limit,
+            rateLimitProfiles.refresh.free.window,
+          ),
+        }),
+        paid: new Ratelimit({
+          redis,
+          analytics: true,
+          prefix: rateLimitProfiles.refresh.paid.prefix,
+          limiter: Ratelimit.slidingWindow(
+            rateLimitProfiles.refresh.paid.limit,
+            rateLimitProfiles.refresh.paid.window,
+          ),
+        }),
+      },
+    } satisfies Record<RateLimitProfile, Record<RateLimitTier, Ratelimit>>;
+
+    return {
+      redis,
+      limiters,
+      status: buildRateLimitStatus(null),
+    };
+  } catch (error) {
+    return {
+      redis: null,
+      limiters: null,
+      status: buildRateLimitStatus(error instanceof Error ? error.message : "Unknown Upstash Redis bootstrap error."),
+    };
+  }
+}
+
+function buildRateLimitStatus(initError: string | null): RateLimitStatus {
+  return {
+    enabled: Boolean(UPSTASH_REDIS_REST_URL && UPSTASH_REDIS_REST_TOKEN && !initError),
+    provider: UPSTASH_REDIS_REST_URL && UPSTASH_REDIS_REST_TOKEN && !initError ? "upstash-redis" : "disabled",
+    trustTierHeader: RATE_LIMIT_TRUST_ACCESS_TIER_HEADER,
+    initError,
+    profiles: {
+      public_mutation: {
+        free: { limit: rateLimitProfiles.public_mutation.free.limit, window: rateLimitProfiles.public_mutation.free.window },
+        paid: { limit: rateLimitProfiles.public_mutation.paid.limit, window: rateLimitProfiles.public_mutation.paid.window },
+      },
+      heavy_mutation: {
+        free: { limit: rateLimitProfiles.heavy_mutation.free.limit, window: rateLimitProfiles.heavy_mutation.free.window },
+        paid: { limit: rateLimitProfiles.heavy_mutation.paid.limit, window: rateLimitProfiles.heavy_mutation.paid.window },
+      },
+      refresh: {
+        free: { limit: rateLimitProfiles.refresh.free.limit, window: rateLimitProfiles.refresh.free.window },
+        paid: { limit: rateLimitProfiles.refresh.paid.limit, window: rateLimitProfiles.refresh.paid.window },
+      },
+    },
+  };
+}
+
+function requestBypassesRateLimit(req: express.Request) {
+  const internalKey = req.header("x-uacp-internal-key");
+  if (INTERNAL_API_KEY && internalKey === INTERNAL_API_KEY) {
+    return true;
+  }
+  const adminKey = req.header("x-uacp-admin-key");
+  return Boolean(ADMIN_API_KEY && adminKey === ADMIN_API_KEY);
+}
+
+function normalizeClientIp(req: express.Request) {
+  const forwarded = String(req.header("x-forwarded-for") || "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .find(Boolean);
+  const raw = forwarded || req.ip || req.socket.remoteAddress || "127.0.0.1";
+  return raw.replace(/^::ffff:/, "");
+}
+
+function resolveRateLimitTier(req: express.Request): RateLimitTier {
+  if (!RATE_LIMIT_TRUST_ACCESS_TIER_HEADER) {
+    return "free";
+  }
+  const provided = String(req.header("x-uacp-access-tier") || "").trim().toLowerCase();
+  return provided === "paid" ? "paid" : "free";
+}
+
+function resolveRateLimitIdentifier(req: express.Request, profile: RateLimitProfile, tier: RateLimitTier) {
+  const trustedUserId = RATE_LIMIT_TRUST_ACCESS_TIER_HEADER
+    ? String(req.header("x-uacp-user-id") || "").trim()
+    : "";
+  const identifier = trustedUserId || normalizeClientIp(req);
+  return `${profile}:${tier}:${identifier}`;
+}
+
+function resolveRateLimitRate(req: express.Request) {
+  const body = req.body;
+  if (!body || typeof body !== "object") {
+    return 1;
+  }
+
+  const candidate =
+    typeof (body as Record<string, unknown>).rate === "number"
+      ? Number((body as Record<string, unknown>).rate)
+      : typeof (body as Record<string, unknown>).batchSize === "number"
+        ? Number((body as Record<string, unknown>).batchSize)
+        : Array.isArray((body as Record<string, unknown>).items)
+          ? (body as { items: unknown[] }).items.length
+          : 1;
+
+  return Number.isFinite(candidate) && candidate > 0 ? Math.min(Math.floor(candidate), 1000) : 1;
+}
+
+function buildRetryAfterSeconds(reset?: number) {
+  if (!Number.isFinite(reset)) return undefined;
+  const retryMs = Math.max(0, Number(reset) - Date.now());
+  return Math.max(1, Math.ceil(retryMs / 1000));
+}
+
+function withPublicRateLimit(profile: RateLimitProfile): express.RequestHandler {
+  return async (req, res, next) => {
+    if (!rateLimitRuntime.limiters || requestBypassesRateLimit(req)) {
+      next();
+      return;
+    }
+
+    try {
+      const tier = resolveRateLimitTier(req);
+      const limiter = rateLimitRuntime.limiters[profile][tier];
+      const rate = resolveRateLimitRate(req);
+      const identifier = resolveRateLimitIdentifier(req, profile, tier);
+      const result = await limiter.limit(identifier, { rate });
+      const retryAfterSeconds = buildRetryAfterSeconds(result.reset);
+
+      if (typeof result.limit === "number") {
+        res.setHeader("x-ratelimit-limit", String(result.limit));
+      }
+      if (typeof result.remaining === "number") {
+        res.setHeader("x-ratelimit-remaining", String(result.remaining));
+      }
+      if (typeof result.reset === "number") {
+        res.setHeader("x-ratelimit-reset", String(result.reset));
+      }
+      if (retryAfterSeconds !== undefined) {
+        res.setHeader("retry-after", String(retryAfterSeconds));
+      }
+      res.setHeader("x-uacp-rate-limit-profile", profile);
+      res.setHeader("x-uacp-rate-limit-tier", tier);
+
+      if (!result.success) {
+        res.status(429).json({
+          error: "Rate limit exceeded.",
+          message: "Too many requests hit this governed endpoint. Please retry after the current window resets.",
+          profile,
+          tier,
+          identifierType: RATE_LIMIT_TRUST_ACCESS_TIER_HEADER && req.header("x-uacp-user-id") ? "user" : "ip",
+          retryAfterSeconds: retryAfterSeconds ?? null,
+        });
+        return;
+      }
+
+      next();
+    } catch (error) {
+      res.status(503).json({
+        error: "Rate limiter unavailable.",
+        detail: error instanceof Error ? error.message : "Unknown rate limiter failure.",
+      });
+    }
+  };
+}
+
 async function refreshBackgroundResearch(reason: "startup" | "scheduled" | "manual") {
   const result = await fetchLiveResearch(DEFAULT_RESEARCH_QUERY, 3);
   state.researchSignals = result.signals;
@@ -7771,6 +8060,7 @@ async function startServer() {
   const httpServer = createServer(app);
   const wss = new WebSocketServer({ server: httpServer });
 
+  app.set("trust proxy", true);
   app.use(cors());
   app.use(express.json({ limit: "1mb" }));
 
@@ -7810,6 +8100,7 @@ async function startServer() {
         archiveWriteRequired: ARCHIVE_WRITE_REQUIRED,
         schedulerEnabled: true,
         dataDir: DATA_DIR,
+        rateLimit: rateLimitRuntime.status,
       },
       registry: {
         version: governanceRegistry.version,
@@ -7895,7 +8186,7 @@ async function startServer() {
     refreshCommercialScorecard();
     res.json(state.v3CommercialScorecard);
   });
-  app.post("/api/v3/commercial-artifacts/:id/replay", async (req, res) => {
+  app.post("/api/v3/commercial-artifacts/:id/replay", withPublicRateLimit("heavy_mutation"), async (req, res) => {
     try {
       const body = ensureRecord(req.body || {}, "commercialReplayRequest");
       const requestedBy = typeof body.requestedBy === "string" && body.requestedBy.trim().length > 0
@@ -7910,7 +8201,7 @@ async function startServer() {
       res.status(400).json({ error: error instanceof Error ? error.message : "Unable to replay commercial artifact." });
     }
   });
-  app.post("/api/v3/commercial-copy/homepage", async (req, res) => {
+  app.post("/api/v3/commercial-copy/homepage", withPublicRateLimit("public_mutation"), async (req, res) => {
     try {
       const body = ensureRecord(req.body, "homepageCopyRequest");
       const sourceArtifactId = ensureString(body.sourceArtifactId, "homepageCopyRequest.sourceArtifactId");
@@ -7921,7 +8212,7 @@ async function startServer() {
       res.status(400).json({ error: error instanceof Error ? error.message : "Unable to generate homepage copy artifact." });
     }
   });
-  app.post("/api/v3/commercial-copy/outreach", async (req, res) => {
+  app.post("/api/v3/commercial-copy/outreach", withPublicRateLimit("public_mutation"), async (req, res) => {
     try {
       const body = ensureRecord(req.body, "outreachCopyRequest");
       const sourceArtifactId = ensureString(body.sourceArtifactId, "outreachCopyRequest.sourceArtifactId");
@@ -7951,7 +8242,7 @@ async function startServer() {
   app.get("/api/telemetry", (_req, res) => res.json(buildTelemetry()));
   app.get("/api/observability/signals", (_req, res) => res.json(buildEngineObservability()));
 
-  app.post("/api/research-refresh", async (_req, res) => {
+  app.post("/api/research-refresh", withPublicRateLimit("refresh"), async (_req, res) => {
     await refreshBackgroundResearch("manual");
     res.json({ ok: true, signalCount: state.researchSignals.length });
   });
@@ -8085,7 +8376,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/v3/plans", async (req, res) => {
+  app.post("/api/v3/plans", withPublicRateLimit("public_mutation"), async (req, res) => {
     try {
       const body = ensureRecord(req.body, "v3PlanRequest");
       const intent = ensureString(body.intent, "v3PlanRequest.intent");
@@ -8105,7 +8396,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/v3/runs", async (req, res) => {
+  app.post("/api/v3/runs", withPublicRateLimit("heavy_mutation"), async (req, res) => {
     try {
       const body = ensureRecord(req.body, "v3RunRequest");
       const planId = ensureString(body.planId, "v3RunRequest.planId");
@@ -8131,7 +8422,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/v3/replay", async (req, res) => {
+  app.post("/api/v3/replay", withPublicRateLimit("heavy_mutation"), async (req, res) => {
     try {
       const body = ensureRecord(req.body, "v3ReplayRequest");
       const runId = ensureString(body.runId, "v3ReplayRequest.runId");
@@ -8148,7 +8439,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/v3/commercial-artifacts/:id/founder-review", async (req, res) => {
+  app.post("/api/v3/commercial-artifacts/:id/founder-review", withPublicRateLimit("public_mutation"), async (req, res) => {
     try {
       const body = ensureRecord(req.body, "founderReviewRequest");
       const status = ensureString(body.status, "founderReviewRequest.status") as FounderReviewStatus;
@@ -8174,7 +8465,7 @@ async function startServer() {
     }
   });
 
-  app.post("/api/v3/demo/revenue-opportunity-test", async (req, res) => {
+  app.post("/api/v3/demo/revenue-opportunity-test", withPublicRateLimit("heavy_mutation"), async (req, res) => {
     try {
       const body = ensureRecord(req.body || {}, "v3RevenueDemoRequest");
       const intent = typeof body.intent === "string" && body.intent.trim().length > 0
@@ -8204,7 +8495,7 @@ async function startServer() {
       res.status(400).json({ error: error instanceof Error ? error.message : "Unable to run Veklom revenue opportunity test." });
     }
   });
-  app.post("/api/intents/route-test", async (req, res) => {
+  app.post("/api/intents/route-test", withPublicRateLimit("heavy_mutation"), async (req, res) => {
     try {
       const body = ensureRecord(req.body || {}, "routeTestRequest");
       const intent = typeof body.intent === "string" && body.intent.trim().length > 0
@@ -8241,7 +8532,7 @@ async function startServer() {
     res.json(proof);
   });
 
-  app.post("/api/plans", async (req, res) => {
+  app.post("/api/plans", withPublicRateLimit("public_mutation"), async (req, res) => {
     const intent = String(req.body?.intent || "").trim();
     if (!intent) {
       res.status(400).json({ error: "Intent is required." });
@@ -8279,7 +8570,7 @@ async function startServer() {
     res.json(plan);
   });
 
-  app.post("/api/runs", async (req, res) => {
+  app.post("/api/runs", withPublicRateLimit("heavy_mutation"), async (req, res) => {
     const planId = String(req.body?.planId || "");
     const plan = state.plans.find((item) => item.id === planId);
     if (!plan) {
