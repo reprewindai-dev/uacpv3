@@ -3,7 +3,7 @@ import { Box } from "@upstash/box";
 const apiKey = process.env.UPSTASH_BOX_API_KEY || "";
 const boxId = process.env.UPSTASH_BOX_ID || "";
 const boxName = process.env.UPSTASH_BOX_NAME || process.env.UACP_BOX_NAME || "uacp-pillar-council";
-const internalApiKey = process.env.UACP_INTERNAL_API_KEY || "";
+let internalApiKey = process.env.UACP_INTERNAL_API_KEY || "";
 const port = Number(process.env.UACP_BOX_PORT || process.env.PORT || 3000);
 const initCommand =
   process.env.UPSTASH_BOX_INIT_COMMAND ||
@@ -18,11 +18,17 @@ if (!apiKey) {
   throw new Error("Missing UPSTASH_BOX_API_KEY.");
 }
 
-if (!internalApiKey) {
-  throw new Error("Missing UACP_INTERNAL_API_KEY.");
+const box = boxId ? await Box.get(boxId, { apiKey }) : await Box.getByName(boxName, { apiKey });
+const boxRecord = await findBoxRecord(box.id);
+const runtime = String(boxRecord?.runtime || "");
+const keepAlive = Boolean(boxRecord?.keep_alive);
+
+if (runtime && !runtime.startsWith("node")) {
+  throw new Error(
+    `Box ${box.id} uses runtime "${runtime}". UACP V3 pillar-council requires a Node runtime because its init command uses npm and tsx.`,
+  );
 }
 
-const box = boxId ? await Box.get(boxId, { apiKey }) : await Box.getByName(boxName, { apiKey });
 const statusBefore = await box.getStatus();
 
 let currentInitCommand = "";
@@ -35,6 +41,11 @@ try {
 }
 
 if (setInitCommand && normalize(currentInitCommand) !== normalize(initCommand)) {
+  if (!keepAlive) {
+    throw new Error(
+      `Box ${box.id} is not keepAlive-enabled. Upstash only guarantees startup initCommand behavior for keep-alive boxes.`,
+    );
+  }
   await box.setInitCommand(initCommand);
   initCommandUpdated = true;
 }
@@ -44,6 +55,14 @@ if (resumeIfPaused && statusBefore.status === "paused") {
 } else if (initCommandUpdated && restartIfInitChanged && statusBefore.status !== "paused") {
   await box.pause();
   await box.resume();
+}
+
+if (!internalApiKey) {
+  internalApiKey = await readBoxEnv("UACP_INTERNAL_API_KEY");
+}
+
+if (!internalApiKey) {
+  throw new Error("Missing UACP_INTERNAL_API_KEY locally and in the Box environment.");
 }
 
 const health = await waitForJson("/api/health");
@@ -63,6 +82,8 @@ console.log(
       box: {
         id: box.id,
         name: boxName,
+        runtime: runtime || null,
+        keepAlive,
         statusBefore: statusBefore.status,
         statusAfter: statusAfter.status,
       },
@@ -77,6 +98,7 @@ console.log(
         boxName: health?.runtime?.boxName,
         mode: health?.runtime?.mode,
         workerGroup: health?.runtime?.workerGroup,
+        internalApiKeySource: process.env.UACP_INTERNAL_API_KEY ? "local-env" : "box-env",
       },
       bootstrap: {
         system: bootstrap?.system,
@@ -139,6 +161,20 @@ process.stdout.write(text);
   return JSON.parse(String(run.result || "").trim());
 }
 
+async function readBoxEnv(name) {
+  const source = `
+import os, sys
+sys.stdout.write(os.environ.get(${JSON.stringify(name)}, ""))
+`;
+  const run = await box.exec.command(`python -c ${shellQuote(source)}`);
+  return String(run.result || "").trim();
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function findBoxRecord(id) {
+  const boxes = await Box.list({ apiKey });
+  return boxes.find((entry) => entry.id === id) || null;
 }
