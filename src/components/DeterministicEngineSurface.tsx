@@ -71,14 +71,22 @@ export function DeterministicEngineSurface({
   const primaryPlanProposals = asArray(primaryPlan?.proposals);
   const gopherAlignment = observability?.gopher_policy_alignment ?? 0;
   const quantumCoherence = observability?.quantum_coherence ?? 0;
-  const certaintyIndex = (quantumCoherence / 100).toFixed(5);
-  const entropyBudget = `${Math.max(0, 100 - quantumCoherence).toFixed(1)}%`;
-  const determinismRatio = (quantumCoherence / 100).toFixed(5);
-  const primeState = quantumCoherence >= 99.999
+  const primarySignals = (observability?.horowitz_signals ?? []).filter((signal) =>
+    signal.id === "RUN_COMPLETION" || signal.id === "POLICY_ALIGNMENT" || signal.id === "EXECUTION_PRESSURE",
+  );
+  const allSignalsPrimed = primarySignals.length === 3 && primarySignals.every((signal) => signal.value >= 0.95);
+  const allSignalsPrimeLocked = primarySignals.length === 3 && primarySignals.every((signal) => signal.value >= 0.999);
+  const primingScore = primarySignals.length > 0
+    ? primarySignals.reduce((sum, signal) => sum + signal.value, 0) / primarySignals.length
+    : 0;
+  const certaintyIndex = allSignalsPrimed ? (quantumCoherence / 100).toFixed(5) : "0.00000";
+  const entropyBudget = allSignalsPrimed ? `${Math.max(0, 100 - quantumCoherence).toFixed(1)}%` : "100.0%";
+  const determinismRatio = allSignalsPrimed ? (quantumCoherence / 100).toFixed(5) : "0.00000";
+  const primeState = allSignalsPrimeLocked
     ? "PRIME LOCK"
-    : quantumCoherence >= 95
+    : allSignalsPrimed
       ? "PRIMED"
-      : quantumCoherence >= 85
+      : primingScore >= 0.85
         ? "WARMING"
         : "UNPRIMED";
 
@@ -139,8 +147,8 @@ export function DeterministicEngineSurface({
         </nav>
       </header>
 
-      <main className="flex-1 grid grid-cols-12 gap-1 p-1 bg-white/5 overflow-hidden">
-        <section className="col-span-3 bg-[#0a0a0a] flex flex-col border border-white/5 overflow-hidden glass-panel">
+      <main className="flex-1 min-h-0 grid grid-cols-12 gap-1 p-1 bg-white/5 overflow-hidden">
+        <section className="col-span-3 min-h-0 bg-[#0a0a0a] flex flex-col border border-white/5 overflow-hidden glass-panel">
           <div className="p-6 border-b border-white/5 bg-gradient-to-b from-white/[0.02] to-transparent">
             <h2 className="text-[10px] uppercase tracking-[0.2em] text-blue-400 font-bold mb-1 flex items-center gap-2">
               <Search size={10} />
@@ -210,7 +218,7 @@ export function DeterministicEngineSurface({
           </div>
         </section>
 
-        <section className="col-span-6 flex flex-col bg-[#080808] border border-white/5 overflow-hidden technical-grid relative">
+        <section className="col-span-6 min-h-0 flex flex-col bg-[#080808] border border-white/5 overflow-hidden technical-grid relative">
           <AnimatePresence mode="wait">
             {activeTab === "intent" && (
               <motion.div
@@ -691,7 +699,7 @@ export function DeterministicEngineSurface({
           </AnimatePresence>
         </section>
 
-        <section className="col-span-3 bg-[#0a0a0a] flex flex-col border border-white/5 overflow-hidden glass-panel">
+        <section className="col-span-3 min-h-0 bg-[#0a0a0a] flex flex-col border border-white/5 overflow-hidden glass-panel">
           <div className="p-6 border-b border-white/5 bg-gradient-to-b from-white/[0.02] to-transparent">
             <h2 className="text-[10px] uppercase tracking-[0.2em] text-purple-400 font-bold mb-1 flex items-center gap-2">
               <Activity size={10} />
@@ -732,7 +740,11 @@ export function DeterministicEngineSurface({
                     </div>
                   </div>
 
-                  <div className="h-16 w-full opacity-50 overflow-hidden grayscale hover:grayscale-0 transition-all duration-700">
+                  <div
+                    className={`h-16 w-full overflow-hidden transition-all duration-700 ${
+                      signal.value >= 0.95 ? "opacity-100 grayscale-0" : "opacity-50 grayscale hover:grayscale-0"
+                    }`}
+                  >
                     {signal.history && signal.history.length > 1 ? (
                       <ResponsiveContainer width="100%" height="100%" minHeight={60} minWidth={100}>
                         <AreaChart data={toHistorySeries(signal.history)}>
@@ -766,6 +778,17 @@ export function DeterministicEngineSurface({
                   </div>
                 </div>
               ))}
+              <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-[10px] uppercase tracking-[0.25em] text-white/25">Prime gate</div>
+                  <div className={`text-[10px] font-mono uppercase tracking-[0.25em] ${allSignalsPrimed ? "text-green-400" : "text-amber-300"}`}>
+                    {primeState}
+                  </div>
+                </div>
+                <div className="mt-2 text-sm text-white/55">
+                  Bottom certainty stays at zero until RUN_COMPLETION, POLICY_ALIGNMENT, and EXECUTION_PRESSURE are all primed.
+                </div>
+              </div>
             </div>
 
             <div className="p-5 glass-panel rounded border-white/5 bg-white/[0.01] mt-8">
@@ -788,19 +811,21 @@ export function DeterministicEngineSurface({
               <div className="flex justify-between items-center text-[9px] font-mono text-white/20 uppercase tracking-widest">
                 <span>Certainty Index</span>
                 <div className="flex items-center gap-3">
-                  <span className="text-[9px] text-blue-300">{primeState}</span>
+                  <span className={`${allSignalsPrimed ? "text-green-300" : "text-amber-300"} text-[9px]`}>{primeState}</span>
                   <span className="text-white text-sm font-serif italic">{certaintyIndex}</span>
                 </div>
               </div>
               <div className="h-[2px] w-full bg-white/5 relative overflow-hidden">
-                <motion.div
-                  className="absolute inset-0 bg-blue-500/40"
-                  animate={{ x: [-100, 400] }}
-                  transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
-                />
+                {allSignalsPrimed && (
+                  <motion.div
+                    className="absolute inset-0 bg-blue-500/40"
+                    animate={{ x: [-100, 400] }}
+                    transition={{ duration: 3, repeat: Infinity, ease: "linear" }}
+                  />
+                )}
                 <div
-                  className="absolute right-0 top-0 h-full bg-blue-400 shadow-[0_0_10px_rgba(59,130,246,1)]"
-                  style={{ width: `${Math.max(0.2, quantumCoherence)}%` }}
+                  className={`absolute right-0 top-0 h-full ${allSignalsPrimed ? "bg-blue-400 shadow-[0_0_10px_rgba(59,130,246,1)]" : "bg-white/10"}`}
+                  style={{ width: `${allSignalsPrimed ? Math.max(0.2, quantumCoherence) : 0}%` }}
                 />
               </div>
             </div>
@@ -893,7 +918,7 @@ function ConvergenceBar({
 
 function InfoPanel({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="glass-panel p-4 rounded-lg">
+    <div className="glass-panel p-4 rounded-lg min-h-0">
       <div className="text-[9px] font-mono text-white/20 uppercase tracking-widest mb-3">{title}</div>
       {children}
     </div>
@@ -915,7 +940,7 @@ function ReferenceList({
   references: Array<{ title: string; source: string; url?: string; publishedAt?: string }>;
 }) {
   return (
-    <div className="space-y-3">
+    <div className="max-h-64 overflow-y-auto custom-scrollbar pr-2 space-y-3">
       {references.map((reference) => (
         <div key={`${reference.source}-${reference.title}`} className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
           <div className="text-xs text-white/80 leading-relaxed">{reference.title}</div>
@@ -945,7 +970,7 @@ function ProposalList({
   proposals: Array<{ id: string; type: string; name: string; rationale: string; status: string }>;
 }) {
   return (
-    <div className="space-y-3">
+    <div className="max-h-64 overflow-y-auto custom-scrollbar pr-2 space-y-3">
       {proposals.map((proposal) => (
         <div key={proposal.id} className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
           <div className="flex items-center justify-between gap-3">
@@ -962,7 +987,7 @@ function ProposalList({
 
 function PillList({ items }: { items: string[] }) {
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="max-h-40 overflow-y-auto custom-scrollbar pr-2 flex flex-wrap gap-2">
       {items.map((item) => (
         <span key={item} className="px-3 py-1 rounded-full border border-white/10 text-[10px] font-mono text-white/60">
           {item}
@@ -974,7 +999,7 @@ function PillList({ items }: { items: string[] }) {
 
 function TextList({ items }: { items: string[] }) {
   return (
-    <div className="space-y-2">
+    <div className="max-h-48 overflow-y-auto custom-scrollbar pr-2 space-y-2">
       {items.map((item) => (
         <div key={item} className="flex gap-2 text-xs text-white/60 italic leading-relaxed">
           <Play size={10} className="mt-0.5 shrink-0 text-blue-400" />

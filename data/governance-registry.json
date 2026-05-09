@@ -1,7 +1,7 @@
 {
-  "version": "1.0.0",
-  "updatedAt": "2026-05-08T00:00:00.000Z",
-  "updatedBy": "system-bootstrap",
+  "version": "1.1.0",
+  "updatedAt": "2026-05-09T00:00:00.000Z",
+  "updatedBy": "control-plane-ops",
   "pillars": [
     {
       "id": "governance",
@@ -156,6 +156,17 @@
       "ref": "v1.4.0",
       "treeSha": "sha-9d8c1f1",
       "status": "approved",
+      "governingCommitteeId": "signal-council",
+      "usableByCommitteeIds": [
+        "growth-intelligence",
+        "builder-systems",
+        "vendor-network"
+      ],
+      "requiredEvidence": [
+        "public-source references",
+        "competitor artifact snapshot"
+      ],
+      "publishRisk": "medium",
       "pillarIds": [
         "growth",
         "knowledge-research"
@@ -175,6 +186,16 @@
       "ref": "v2.0.1",
       "treeSha": "sha-4ac77aa",
       "status": "approved",
+      "governingCommitteeId": "execution-board",
+      "usableByCommitteeIds": [
+        "growth-intelligence",
+        "marketplace-operations"
+      ],
+      "requiredEvidence": [
+        "account context",
+        "offer framing"
+      ],
+      "publishRisk": "medium",
       "pillarIds": [
         "sales",
         "growth"
@@ -193,6 +214,17 @@
       "ref": "v1.9.3",
       "treeSha": "sha-c13f9b2",
       "status": "approved",
+      "governingCommitteeId": "founder-council",
+      "usableByCommitteeIds": [
+        "governance-evidence",
+        "vendor-network",
+        "experience-assurance"
+      ],
+      "requiredEvidence": [
+        "claim text",
+        "policy rationale"
+      ],
+      "publishRisk": "high",
       "pillarIds": [
         "compliance-risk",
         "governance"
@@ -211,9 +243,252 @@
       "ref": "v1.1.8",
       "treeSha": "sha-f82a11d",
       "status": "review",
+      "governingCommitteeId": "founder-council",
+      "usableByCommitteeIds": [
+        "governance-evidence",
+        "marketplace-operations"
+      ],
+      "requiredEvidence": [
+        "pricing memo",
+        "reserve exposure trace"
+      ],
+      "publishRisk": "high",
       "pillarIds": [
         "finance",
         "governance"
+      ]
+    },
+    {
+      "id": "outreach-sequencing",
+      "name": "outreach-sequencing",
+      "category": "skill",
+      "description": "Prepare governed email, DM, and follow-up sequences tied to approved positioning and archiveable claims.",
+      "allowedTools": [
+        "read",
+        "write"
+      ],
+      "source": "internal-registry/revenue-systems",
+      "ref": "v1.3.0",
+      "treeSha": "sha-28bd930",
+      "status": "approved",
+      "governingCommitteeId": "execution-board",
+      "usableByCommitteeIds": [
+        "growth-intelligence",
+        "marketplace-operations"
+      ],
+      "requiredEvidence": [
+        "approved offer framing",
+        "founder-approved claims"
+      ],
+      "publishRisk": "medium",
+      "pillarIds": [
+        "growth",
+        "sales"
+      ]
+    },
+    {
+      "id": "buyer-pain-diagnostic",
+      "name": "buyer-pain-diagnostic",
+      "category": "skill",
+      "description": "Turn regulated and enterprise workflow pain into source-backed diagnostic briefs and demo narratives.",
+      "allowedTools": [
+        "read",
+        "browser",
+        "write"
+      ],
+      "source": "internal-registry/research-systems",
+      "ref": "v1.1.0",
+      "treeSha": "sha-e17a511",
+      "status": "approved",
+      "governingCommitteeId": "signal-council",
+      "usableByCommitteeIds": [
+        "growth-intelligence",
+        "governance-evidence"
+      ],
+      "requiredEvidence": [
+        "industry sources",
+        "workflow pain summary"
+      ],
+      "publishRisk": "medium",
+      "pillarIds": [
+        "knowledge-research",
+        "growth",
+        "sales"
+      ]
+    },
+    {
+      "id": "governed-offer-packaging",
+      "name": "governed-offer-packaging",
+      "category": "skill",
+      "description": "Turn approved buyer pain and opportunity briefs into monetizable Veklom package framing with archive requirements.",
+      "allowedTools": [
+        "read",
+        "write"
+      ],
+      "source": "internal-registry/product-systems",
+      "ref": "v2.2.0",
+      "treeSha": "sha-2028ab1",
+      "status": "approved",
+      "governingCommitteeId": "execution-board",
+      "usableByCommitteeIds": [
+        "builder-systems",
+        "marketplace-operations"
+      ],
+      "requiredEvidence": [
+        "approved opportunity brief",
+        "pricing path"
+      ],
+      "publishRisk": "medium",
+      "pillarIds": [
+        "product",
+        "sales",
+        "operations"
+      ]
+    },
+    {
+      "id": "archive-integrity-check",
+      "name": "archive-integrity-check",
+      "category": "skill",
+      "description": "Verify archive completeness, lineage, and replayability before a run or artifact is treated as institutional truth.",
+      "allowedTools": [
+        "read",
+        "write"
+      ],
+      "source": "internal-registry/evidence-systems",
+      "ref": "v1.6.4",
+      "treeSha": "sha-cc3914f",
+      "status": "approved",
+      "governingCommitteeId": "founder-council",
+      "usableByCommitteeIds": [
+        "governance-evidence",
+        "experience-assurance"
+      ],
+      "requiredEvidence": [
+        "run archive reference",
+        "event lineage"
+      ],
+      "publishRisk": "high",
+      "pillarIds": [
+        "governance",
+        "knowledge-research"
+      ]
+    },
+    {
+      "id": "demo-proof-check",
+      "name": "demo-proof-check",
+      "category": "skill",
+      "description": "Inspect demo and website surfaces for unsupported claims, broken proof paths, and buyer-facing trust gaps.",
+      "allowedTools": [
+        "read",
+        "browser",
+        "write"
+      ],
+      "source": "internal-registry/experience-systems",
+      "ref": "v1.4.2",
+      "treeSha": "sha-7d33ace",
+      "status": "approved",
+      "governingCommitteeId": "execution-board",
+      "usableByCommitteeIds": [
+        "experience-assurance",
+        "growth-intelligence"
+      ],
+      "requiredEvidence": [
+        "demo path",
+        "archive or source proof"
+      ],
+      "publishRisk": "medium",
+      "pillarIds": [
+        "product",
+        "sales",
+        "governance"
+      ]
+    },
+    {
+      "id": "vendor-screening",
+      "name": "vendor-screening",
+      "category": "skill",
+      "description": "Qualify vendors and partners for risk, reliability, license fit, and margin contribution before activation.",
+      "allowedTools": [
+        "read",
+        "write"
+      ],
+      "source": "internal-registry/vendor-systems",
+      "ref": "v1.0.7",
+      "treeSha": "sha-61e30f0",
+      "status": "approved",
+      "governingCommitteeId": "founder-council",
+      "usableByCommitteeIds": [
+        "vendor-network",
+        "governance-evidence"
+      ],
+      "requiredEvidence": [
+        "vendor profile",
+        "risk and license notes"
+      ],
+      "publishRisk": "high",
+      "pillarIds": [
+        "compliance-risk",
+        "finance",
+        "operations"
+      ]
+    },
+    {
+      "id": "freshness-report",
+      "name": "freshness-report",
+      "category": "skill",
+      "description": "Measure whether workers, signals, and surfaces are fresh enough to be trusted for active execution.",
+      "allowedTools": [
+        "read",
+        "write"
+      ],
+      "source": "internal-registry/runtime-systems",
+      "ref": "v1.2.5",
+      "treeSha": "sha-bd2ab91",
+      "status": "approved",
+      "governingCommitteeId": "execution-board",
+      "usableByCommitteeIds": [
+        "experience-assurance",
+        "marketplace-operations"
+      ],
+      "requiredEvidence": [
+        "worker heartbeat",
+        "signal sync state"
+      ],
+      "publishRisk": "low",
+      "pillarIds": [
+        "operations",
+        "product",
+        "knowledge-research"
+      ]
+    },
+    {
+      "id": "founder-review-routing",
+      "name": "founder-review-routing",
+      "category": "skill",
+      "description": "Route regulated, high-risk, or weakly evidenced claims into founder review before publishing or outreach.",
+      "allowedTools": [
+        "read",
+        "write"
+      ],
+      "source": "internal-registry/governance-systems",
+      "ref": "v1.8.1",
+      "treeSha": "sha-88ad290",
+      "status": "approved",
+      "governingCommitteeId": "founder-council",
+      "usableByCommitteeIds": [
+        "governance-evidence",
+        "growth-intelligence",
+        "experience-assurance"
+      ],
+      "requiredEvidence": [
+        "claim text",
+        "risk rationale"
+      ],
+      "publishRisk": "high",
+      "pillarIds": [
+        "governance",
+        "compliance-risk",
+        "sales"
       ]
     }
   ],
@@ -250,6 +525,32 @@
         "product",
         "growth",
         "sales"
+      ]
+    },
+    {
+      "id": "competitor-raid",
+      "name": "Competitor raid",
+      "category": "workflow",
+      "description": "Turn competitor launches, pricing gaps, and workflow failures into attack plans and counter-positioning packets.",
+      "outcome": "Competitive attack brief",
+      "pillarIds": [
+        "growth",
+        "sales",
+        "knowledge-research",
+        "product"
+      ]
+    },
+    {
+      "id": "vendor-recruitment",
+      "name": "Vendor recruitment",
+      "category": "workflow",
+      "description": "Source, qualify, and activate vendors, affiliates, and integration partners under governed outreach and screening rules.",
+      "outcome": "Vendor pipeline packet",
+      "pillarIds": [
+        "growth",
+        "sales",
+        "operations",
+        "compliance-risk"
       ]
     }
   ],
@@ -310,6 +611,16 @@
       "id": "marketplace-operations",
       "name": "Marketplace Operations",
       "purpose": "Run marketplace health, intake, routing, and operational arbitration.",
+      "chair": "Operations Marshal",
+      "sponsor": "Founder Council",
+      "decisionFramework": "RAPID",
+      "cadencePerDay": 3,
+      "regroupIntervalMinutes": 480,
+      "successMetrics": [
+        "Cycle time",
+        "Qualified pipeline",
+        "Gross margin"
+      ],
       "pillarIds": [
         "operations",
         "sales",
@@ -327,6 +638,16 @@
       "id": "governance-evidence",
       "name": "Governance & Evidence",
       "purpose": "Protect evidence integrity, policy judgment, and escalation discipline.",
+      "chair": "Policy Steward",
+      "sponsor": "Founder Council",
+      "decisionFramework": "RAPID",
+      "cadencePerDay": 3,
+      "regroupIntervalMinutes": 480,
+      "successMetrics": [
+        "Policy SLA",
+        "Risk incidents",
+        "Signal-to-shipment ratio"
+      ],
       "pillarIds": [
         "governance",
         "finance",
@@ -344,6 +665,16 @@
       "id": "growth-intelligence",
       "name": "Growth & Intelligence",
       "purpose": "Convert public signals and buyer motion into governed growth actions.",
+      "chair": "Revenue Operator",
+      "sponsor": "Founder Council",
+      "decisionFramework": "RAPID",
+      "cadencePerDay": 3,
+      "regroupIntervalMinutes": 480,
+      "successMetrics": [
+        "Qualified pipeline",
+        "Closed ARR",
+        "Signal-to-shipment ratio"
+      ],
       "pillarIds": [
         "growth",
         "sales",
@@ -352,6 +683,8 @@
       "workerIds": [
         "signal",
         "scout",
+        "spyglass",
+        "raider",
         "mint",
         "welcome"
       ]
@@ -360,6 +693,16 @@
       "id": "builder-systems",
       "name": "Builder Systems",
       "purpose": "Discover, shape, and forge builder opportunities without bypassing governance.",
+      "chair": "Engineering Lead",
+      "sponsor": "Execution Board",
+      "decisionFramework": "DACI",
+      "cadencePerDay": 3,
+      "regroupIntervalMinutes": 480,
+      "successMetrics": [
+        "Deployment quality",
+        "Activation rate",
+        "Signal-to-shipment ratio"
+      ],
       "pillarIds": [
         "engineering",
         "product",
@@ -375,6 +718,16 @@
       "id": "experience-assurance",
       "name": "Experience Assurance",
       "purpose": "Keep the product experience truthful, fresh, and regression-resistant.",
+      "chair": "Experience Lead",
+      "sponsor": "Execution Board",
+      "decisionFramework": "RACI",
+      "cadencePerDay": 3,
+      "regroupIntervalMinutes": 480,
+      "successMetrics": [
+        "Activation rate",
+        "Cycle time",
+        "Risk incidents"
+      ],
       "pillarIds": [
         "product",
         "operations",
@@ -388,6 +741,33 @@
         "pulse",
         "sheriff",
         "welcome"
+      ]
+    },
+    {
+      "id": "vendor-network",
+      "name": "Vendor Network",
+      "purpose": "Source, recruit, qualify, and activate external vendors, affiliates, and distribution partners.",
+      "chair": "Channel Lead",
+      "sponsor": "Founder Council",
+      "decisionFramework": "DACI",
+      "cadencePerDay": 3,
+      "regroupIntervalMinutes": 480,
+      "successMetrics": [
+        "Qualified pipeline",
+        "Closed ARR",
+        "Gross margin"
+      ],
+      "pillarIds": [
+        "growth",
+        "sales",
+        "operations",
+        "compliance-risk",
+        "finance"
+      ],
+      "workerIds": [
+        "vendor-scout",
+        "vendor-recruiter",
+        "vendor-auditor"
       ]
     }
   ],
@@ -700,6 +1080,76 @@
         "status",
         "last_run",
         "gap_count"
+      ],
+      "requiredSecrets": []
+    },
+    {
+      "id": "spyglass",
+      "displayName": "Spyglass",
+      "committeeId": "growth-intelligence",
+      "primaryPillar": "knowledge-research",
+      "secondaryPillars": [
+        "growth",
+        "sales"
+      ],
+      "purpose": "Track competitor launches, pricing moves, distribution changes, and weak surfaces that can be attacked.",
+      "schedule": "Every 30 minutes",
+      "intervalMinutes": 30,
+      "inputSources": [
+        "research-signals",
+        "archives",
+        "events"
+      ],
+      "allowedActions": [
+        "monitor_competitors",
+        "write_competitor_dossier",
+        "flag_attack_surface"
+      ],
+      "forbiddenActions": [
+        "invent_competitor_claims"
+      ],
+      "outputArtifact": "competitor-dossier",
+      "archiveEventType": "worker_run_completed",
+      "escalationRuleId": "missing-live-evidence",
+      "statusFields": [
+        "status",
+        "last_run",
+        "competitor_count"
+      ],
+      "requiredSecrets": []
+    },
+    {
+      "id": "raider",
+      "displayName": "Raider",
+      "committeeId": "growth-intelligence",
+      "primaryPillar": "growth",
+      "secondaryPillars": [
+        "sales",
+        "product"
+      ],
+      "purpose": "Convert competitor weaknesses into campaigns, offer attacks, and counter-positioning packets.",
+      "schedule": "Hourly",
+      "intervalMinutes": 60,
+      "inputSources": [
+        "research-signals",
+        "plans",
+        "archives"
+      ],
+      "allowedActions": [
+        "write_attack_brief",
+        "rank_counter_moves",
+        "route_counter_positioning"
+      ],
+      "forbiddenActions": [
+        "launch_unapproved_campaigns"
+      ],
+      "outputArtifact": "competitive-attack-brief",
+      "archiveEventType": "worker_run_completed",
+      "escalationRuleId": "missing-live-evidence",
+      "statusFields": [
+        "status",
+        "last_run",
+        "attack_vectors"
       ],
       "requiredSecrets": []
     },
@@ -1084,6 +1534,112 @@
         "status",
         "last_run",
         "journey_health"
+      ],
+      "requiredSecrets": []
+    },
+    {
+      "id": "vendor-scout",
+      "displayName": "Vendor Scout",
+      "committeeId": "vendor-network",
+      "primaryPillar": "growth",
+      "secondaryPillars": [
+        "sales",
+        "operations"
+      ],
+      "purpose": "Find vendors, affiliates, and integration partners that expand distribution or service capacity.",
+      "schedule": "Hourly",
+      "intervalMinutes": 60,
+      "inputSources": [
+        "research-signals",
+        "events",
+        "archives"
+      ],
+      "allowedActions": [
+        "source_vendor_leads",
+        "write_vendor_map",
+        "score_partner_fit"
+      ],
+      "forbiddenActions": [
+        "approve_vendor_contracts"
+      ],
+      "outputArtifact": "vendor-lead-map",
+      "archiveEventType": "worker_run_completed",
+      "escalationRuleId": "missing-live-evidence",
+      "statusFields": [
+        "status",
+        "last_run",
+        "vendor_count"
+      ],
+      "requiredSecrets": []
+    },
+    {
+      "id": "vendor-recruiter",
+      "displayName": "Vendor Recruiter",
+      "committeeId": "vendor-network",
+      "primaryPillar": "sales",
+      "secondaryPillars": [
+        "growth",
+        "operations"
+      ],
+      "purpose": "Run governed outreach, qualification, and follow-up for vendors and channel partners.",
+      "schedule": "Every 90 minutes",
+      "intervalMinutes": 90,
+      "inputSources": [
+        "plans",
+        "research-signals",
+        "events"
+      ],
+      "allowedActions": [
+        "prepare_vendor_outreach",
+        "qualify_vendor_interest",
+        "write_recruitment_brief"
+      ],
+      "forbiddenActions": [
+        "sign_binding_agreements"
+      ],
+      "outputArtifact": "vendor-recruitment-brief",
+      "archiveEventType": "worker_run_completed",
+      "escalationRuleId": "missing-live-evidence",
+      "statusFields": [
+        "status",
+        "last_run",
+        "qualified_vendors"
+      ],
+      "requiredSecrets": []
+    },
+    {
+      "id": "vendor-auditor",
+      "displayName": "Vendor Auditor",
+      "committeeId": "vendor-network",
+      "primaryPillar": "compliance-risk",
+      "secondaryPillars": [
+        "finance",
+        "operations"
+      ],
+      "purpose": "Vet vendor economics, policy exposure, reliability, and onboarding readiness before activation.",
+      "schedule": "Every 120 minutes",
+      "intervalMinutes": 120,
+      "inputSources": [
+        "plans",
+        "archives",
+        "events",
+        "telemetry"
+      ],
+      "allowedActions": [
+        "screen_vendor_risk",
+        "write_vendor_decision",
+        "flag_margin_exposure"
+      ],
+      "forbiddenActions": [
+        "override_compliance_review"
+      ],
+      "outputArtifact": "vendor-activation-decision",
+      "archiveEventType": "worker_run_completed",
+      "escalationRuleId": "regulated-objective-review",
+      "statusFields": [
+        "status",
+        "last_run",
+        "vendor_decisions"
       ],
       "requiredSecrets": []
     }

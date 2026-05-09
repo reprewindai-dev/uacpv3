@@ -127,6 +127,12 @@ export interface OperatorCommittee {
   purpose: string;
   pillarIds: string[];
   workerIds: string[];
+  chair?: string;
+  sponsor?: string;
+  decisionFramework?: "RACI" | "DACI" | "RAPID";
+  cadencePerDay?: number;
+  regroupIntervalMinutes?: number;
+  successMetrics?: string[];
 }
 
 export interface SkillArtifact {
@@ -140,6 +146,14 @@ export interface SkillArtifact {
   treeSha: string;
   status: SkillStatus;
   pillarIds: string[];
+  governingCommitteeId?: string;
+  usableByCommitteeIds?: string[];
+  requiredEvidence?: string[];
+  publishRisk?: RiskTier;
+  inputType?: string;
+  outputType?: string;
+  sla?: string;
+  revisionHistory?: string[];
 }
 
 export interface WorkflowArtifact {
@@ -294,6 +308,47 @@ export interface GovernanceRegistry {
   minimumLiveWorkerIds: string[];
 }
 
+export interface CanonicalPlanTemplate {
+  id: string;
+  name: string;
+  objective: string;
+  ownerCouncil: string;
+  payingUser: string;
+  pricingModel: string;
+  executionWindow: string;
+  committeeRoute: string[];
+  requiredSkillIds: string[];
+  workflowIds: string[];
+  admissionRules: string[];
+  vetoRules: string[];
+  successMetrics: string[];
+}
+
+export interface EnterpriseCouncilView {
+  id: string;
+  name: string;
+  purpose: string;
+  powers: string[];
+  escalationRule: string;
+  mappedOperatorCommitteeIds: string[];
+  workerCount: number;
+  skillCount: number;
+}
+
+export interface EnterpriseCheckView {
+  id: "pulse" | "mirror" | "sentinel";
+  name: string;
+  ownerWorkerId: string;
+  ownerCommitteeId: string;
+  status: "pass" | "watch" | "fail";
+  summary: string;
+  purpose: string;
+  passCondition: string;
+  failCondition: string;
+  metric: number;
+  lastCheckedAt: string;
+}
+
 export interface OperatorWorker {
   id: string;
   displayName: string;
@@ -339,6 +394,31 @@ export interface OperatorRun {
   escalations: string[];
   errors: string[];
   nextRecommendation: string;
+}
+
+export interface OperatorCommitteeRuntimeView {
+  id: string;
+  name: string;
+  purpose: string;
+  chair?: string;
+  sponsor?: string;
+  decisionFramework?: "RACI" | "DACI" | "RAPID";
+  cadencePerDay: number;
+  regroupIntervalMinutes: number;
+  lastRegroupAt?: string;
+  nextRegroupAt: string;
+  regroupsToday: number;
+  workerCount: number;
+  activeWorkerCount: number;
+  queuedWorkerCount: number;
+  backlog: string[];
+  activeExecutionWindow: {
+    id: string;
+    label: string;
+    objective: string;
+  };
+  benefitSummary: string;
+  successMetrics: string[];
 }
 
 export interface BackendProductEvent {
@@ -387,6 +467,12 @@ export interface CommandCenterSnapshot {
     archiveCount: number;
     planCount: number;
     governedRunCount: number;
+  };
+  governance?: {
+    councilCount: number;
+    canonicalPlanCount: number;
+    enterpriseCheckCount: number;
+    passingEnterpriseChecks: number;
   };
 }
 
@@ -476,4 +562,365 @@ export interface EngineObservability {
   gopher_policy_alignment: number;
   market_convergence: EngineConvergenceMetric[];
   horowitz_signals: HorowitzSignal[];
+}
+
+export type VeklomPillarId =
+  | "governance-policy"
+  | "sovereignty-infrastructure"
+  | "model-tool-governance"
+  | "execution-runtime-safety"
+  | "evidence-audit-archives"
+  | "tenant-experience-integration"
+  | "economics-operating-reserve"
+  | "compliance-risk-legal"
+  | "research-knowledge-learning";
+
+export type CommitteeAuthorityLevel = "advisory" | "operational" | "approval" | "veto" | "constitutional";
+export type WorkerArchetype = "arbiter" | "sheriff" | "gauge" | "switchman" | "curator" | "builder" | "scout" | "steward" | "treasurer";
+export type SkillBindingState = "proposed" | "reviewing" | "approved" | "pinned" | "quarantined" | "revoked";
+export type V3PlanStatus = "draft" | "under_review" | "approved" | "rejected" | "queued" | "executing" | "completed" | "failed" | "archived";
+export type V3RunStatus = "pending" | "admission_review" | "approved" | "queued" | "executing" | "paused" | "blocked" | "completed" | "failed" | "cancelled" | "replaying";
+export type V3DecisionStatus = "approved" | "blocked" | "needs_founder_review";
+export type ReplayMode = "audit_only" | "simulate" | "full_replay";
+export type RegistryRouteStage = "Research" | "Product" | "Governance" | "Marketplace/Growth" | "Finance" | "Archive";
+export type WorkerRegistryStatus =
+  | "ready"
+  | "active"
+  | "blocked"
+  | "paused"
+  | "review"
+  | "blocked_invalid_registry";
+export type WorkerLastRunResult = "success" | "partial_success" | "failure" | "blocked" | "none";
+export type V3EventType =
+  | "run_submitted"
+  | "run_admitted"
+  | "run_started"
+  | "worker_assigned"
+  | "skill_invoked"
+  | "policy_checked"
+  | "approval_requested"
+  | "approval_granted"
+  | "approval_rejected"
+  | "artifact_created"
+  | "archive_written"
+  | "run_completed"
+  | "run_failed"
+  | "run_replayed"
+  | "event_correction";
+
+export type V3EventActorType = "system" | "committee" | "worker" | "skill" | "policy_engine" | "archive_service" | "human";
+
+export interface VeklomPillar {
+  id: VeklomPillarId;
+  name: string;
+  purpose: string;
+  successMetric: string;
+}
+
+export interface SkillBinding {
+  id: string;
+  name: string;
+  state: SkillBindingState;
+  governingCommitteeId: string;
+  pillarIds: VeklomPillarId[];
+  purpose: string;
+  pinned: boolean;
+  sourceRepo?: string;
+  sourceRef?: string;
+  sourceTreeSha?: string;
+  allowedTools: string[];
+}
+
+export interface WorkerRegistryEntry {
+  id: string;
+  name: string;
+  archetype: WorkerArchetype;
+  pillarId: VeklomPillarId;
+  committeeId: string;
+  authorityLevel: CommitteeAuthorityLevel;
+  allowedSkillIds: string[];
+  forbiddenActions: string[];
+  requiredOutput: string;
+  reviewer: string;
+  archivePath: string;
+  requiredEnvKeys: string[];
+  status: "ready" | "paused" | "blocked";
+  promotionMetric: string;
+  demotionTrigger: string;
+  currentJob: string;
+  lastRunResult?: string;
+}
+
+export interface WorkerRegistryRecord {
+  worker_id: string;
+  worker_name: string;
+  pillar_id: string;
+  pillar_name: string;
+  committee_id: string;
+  committee_name: string;
+  job: string;
+  authority_level: CommitteeAuthorityLevel;
+  allowed_skills: string[];
+  forbidden_actions: string[];
+  keys_envs_required: string[];
+  current_status: WorkerRegistryStatus;
+  required_output: string;
+  reviewer: string;
+  promotion_metric: string;
+  demotion_trigger: string;
+  archive_path: string;
+  plan_id: string;
+  last_run_id?: string;
+  last_run_result?: WorkerLastRunResult;
+  last_run_summary?: string;
+  last_run_at?: string;
+}
+
+export interface WorkerRegistryValidation {
+  worker_id: string;
+  valid: boolean;
+  current_status: WorkerRegistryStatus;
+  missing_fields: string[];
+  resolved: {
+    pillar: boolean;
+    committee: boolean;
+    plan: boolean;
+    archive_path: boolean;
+    reviewer: boolean;
+    required_output: boolean;
+    authority_level: boolean;
+  };
+}
+
+export interface RoutedIntentStep {
+  stage: RegistryRouteStage;
+  worker_name: string;
+  status: "completed" | "blocked" | "skipped";
+  output?: string;
+  reviewer?: string;
+  archive_path?: string;
+  reason?: string;
+}
+
+export interface RoutedIntentResult {
+  intent: string;
+  route: RegistryRouteStage[];
+  status: "completed" | "blocked";
+  blocked_reason?: string;
+  plan_id: string;
+  steps: RoutedIntentStep[];
+}
+
+export interface PlanRegistryProof {
+  plan_id: string;
+  valid: boolean;
+  worker_records: WorkerRegistryRecord[];
+  validations: WorkerRegistryValidation[];
+  archive_record_id?: string;
+  run_id?: string;
+  issues: string[];
+}
+
+export interface V3Committee {
+  id: string;
+  name: string;
+  purpose: string;
+  pillarIds: VeklomPillarId[];
+  authorityLevel: CommitteeAuthorityLevel;
+  workerIds: string[];
+  allowedActions: string[];
+  escalationTarget?: string;
+}
+
+export interface V3Plan {
+  id: string;
+  title: string;
+  intent: string;
+  status: V3PlanStatus;
+  revision: number;
+  revisionHash: string;
+  frozenAt: string;
+  tenantId?: string;
+  createdAt: string;
+  updatedAt: string;
+  pillars: VeklomPillarId[];
+  committeeIds: string[];
+  workerIds: string[];
+  skillIds: string[];
+  route: VeklomPillarId[];
+  requiredOutputs: string[];
+  approvalPath: string[];
+  runtimePolicies: string[];
+  evidenceCapture: string[];
+  archivePath: string;
+}
+
+export interface V3Run {
+  id: string;
+  planId: string;
+  planRevision: number;
+  planRevisionHash: string;
+  status: V3RunStatus;
+  decisionStatus?: V3DecisionStatus;
+  submittedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  replayOfRunId?: string;
+  workerIds: string[];
+  committeeIds: string[];
+  skillIds: string[];
+  approvalPath: string[];
+  runtimePolicies: string[];
+  evidenceCapture: string[];
+  currentStep?: string;
+  artifact?: Record<string, unknown>;
+  archiveRecordId?: string;
+  integrityStatus?: "ok" | "integrity_failed";
+  summary?: string;
+  errors: string[];
+}
+
+export interface V3Event {
+  id: string;
+  runId: string;
+  planId: string;
+  planRevision: number;
+  seq: number;
+  type: V3EventType;
+  at: string;
+  actorType: V3EventActorType;
+  actorId: string;
+  committeeId?: string;
+  workerId?: string;
+  skillId?: string;
+  surface?: SurfaceId;
+  pillarIds: VeklomPillarId[];
+  message: string;
+  payload?: Record<string, unknown>;
+  policyRefs?: string[];
+  evidenceRefs?: string[];
+  prevEventHash?: string;
+  eventHash: string;
+  hashAlgorithm: "sha256";
+  schemaVersion: string;
+  replayable: boolean;
+}
+
+export interface ArchiveRecord {
+  id: string;
+  runId: string;
+  planId: string;
+  planRevision: number;
+  archivePath: string;
+  type: "plan_snapshot" | "run_bundle" | "replay_bundle" | "commercial_decision";
+  summary: string;
+  createdAt: string;
+  createdBy: string;
+  decisionStatus: V3DecisionStatus;
+  artifact: Record<string, unknown>;
+  eventIds: string[];
+  bundleHash: string;
+  hashAlgorithm: "sha256";
+  signer: string;
+  signedAt: string;
+  sourceEventRange?: {
+    startSeq: number;
+    endSeq: number;
+  };
+  lineage?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  replayable: boolean;
+}
+
+export interface ReplayRequest {
+  id: string;
+  runId: string;
+  requestedBy: string;
+  requestedAt: string;
+  mode: ReplayMode;
+  reason: string;
+}
+
+export interface ReplayResult {
+  id: string;
+  sourceRunId: string;
+  replayRunId?: string;
+  mode: ReplayMode;
+  status: "completed" | "failed";
+  summary: string;
+  archiveRecordId?: string;
+  replayArchiveId?: string;
+  sourceUnchanged?: boolean;
+  eventChainIntegrity?: {
+    chainValid: boolean;
+    checkedEventCount: number;
+    firstBrokenSeq?: number;
+    reason?: string;
+  };
+  divergenceNotes?: string[];
+}
+
+export type CommercialArtifactType =
+  | "buyer_facing_offer"
+  | "founder_review_claim"
+  | "competitor_positioning"
+  | "vendor_lead"
+  | "tool_package_candidate"
+  | "outreach_asset";
+
+export type FounderReviewStatus =
+  | "pending_founder_review"
+  | "approved"
+  | "rejected"
+  | "needs_revision";
+
+export interface FounderReviewLane {
+  status: FounderReviewStatus;
+  reason: string;
+  riskNotes: string[];
+  approvedCopy?: string;
+  rejectedClaims: string[];
+  archiveReference?: string;
+  reviewedAt?: string;
+  reviewedBy?: string;
+}
+
+export interface CommercialArtifact {
+  id: string;
+  type: CommercialArtifactType;
+  title: string;
+  summary: string;
+  sourceCommercialArtifactId?: string;
+  sourcePlanId: string;
+  sourceRunId: string;
+  sourceArchiveRecordId: string;
+  replayArchiveRecordId?: string;
+  sourceReplayResultId?: string;
+  buyerFacing: boolean;
+  positioningUse: boolean;
+  highRisk: boolean;
+  evidenceBacked: boolean;
+  copy: {
+    headline: string;
+    subheadline: string;
+    body: string[];
+    cta?: string;
+  };
+  founderReview: FounderReviewLane;
+  archiveReference: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CommercialScorecard {
+  qualifiedEvaluationConversations: number;
+  privateBackendAccessRequests: number;
+  vendorToolConversations: number;
+  approvedPackageConcepts: number;
+  founderApprovedCommunityInteractions: number;
+  blockedUnsafeClaims: number;
+  archiveRecordsWritten: number;
+  directReplayChecksCompleted: number;
+  replayLinkedArtifacts: number;
+  lastUpdatedAt: string;
 }

@@ -203,7 +203,7 @@ export default function App() {
       fetchJson<OperatorWorker[]>("/api/operators"),
       fetchJson<WorkerRuntimeState[]>("/api/operator-runtime"),
       fetchJson<OperatorRun[]>("/api/operator-runs"),
-      fetchJson<SkillArtifact[]>("/api/skills"),
+      fetchJson<SkillArtifact[]>("/api/enterprise-skills"),
       fetchJson<WorkflowArtifact[]>("/api/workflows"),
       fetchJson<BackendTruthSummary>("/api/backend-summary"),
       fetchJson<BackendProductEvent[]>("/api/backend-events"),
@@ -426,7 +426,7 @@ export default function App() {
             onRouteToSunnyvale={routeToSunnyvale}
           />
         ) : (
-          <div className="h-full grid grid-cols-12 gap-4">
+          <div className="h-full min-h-0 grid grid-cols-12 gap-4">
             {activeSurface === "sunnyvale" && (
               <SunnyvaleSurface
                 plan={activePlan}
@@ -509,7 +509,7 @@ function SunnyvaleSurface({
 
   return (
     <>
-      <section className="col-span-8 h-full overflow-hidden glass-panel border border-white/5">
+      <section className="col-span-8 h-full min-h-0 overflow-hidden glass-panel border border-white/5">
         <div className="p-6 border-b border-white/5 bg-gradient-to-b from-white/[0.02] to-transparent">
           <div className="flex items-center justify-between gap-4">
             <div>
@@ -876,7 +876,7 @@ function SunnyvaleSurface({
         </div>
       </section>
 
-      <section className="col-span-4 h-full overflow-hidden flex flex-col gap-4">
+      <section className="col-span-4 h-full min-h-0 overflow-y-auto custom-scrollbar flex flex-col gap-4 pr-1">
         <Panel title="Governed admission queue" icon={<BrainCircuit size={14} className="text-blue-400" />}>
           {plan ? (
             <div className="space-y-4">
@@ -1016,7 +1016,7 @@ function SiliconValleySurface({
 
   return (
     <>
-      <section className="col-span-4 h-full overflow-y-auto custom-scrollbar glass-panel border border-white/5">
+      <section className="col-span-4 h-full min-h-0 overflow-y-auto custom-scrollbar glass-panel border border-white/5">
         <div className="p-6 border-b border-white/5 bg-gradient-to-b from-white/[0.02] to-transparent">
           <h2 className="font-serif italic text-3xl text-white/90">Silicon Valley</h2>
           <p className="text-[10px] uppercase tracking-[0.3em] text-white/30 font-bold mt-1">
@@ -1024,7 +1024,7 @@ function SiliconValleySurface({
           </p>
         </div>
 
-        <div className="p-6 space-y-4">
+        <div className="p-6 min-h-0 space-y-4">
           <Panel title="Command Center truth" icon={<Building2 size={14} className="text-blue-400" />}>
             {commandCenter ? (
               <div className="space-y-4">
@@ -1111,7 +1111,7 @@ function SiliconValleySurface({
         </div>
       </section>
 
-      <section className="col-span-5 h-full overflow-y-auto custom-scrollbar glass-panel border border-white/5">
+      <section className="col-span-5 h-full min-h-0 overflow-y-auto custom-scrollbar glass-panel border border-white/5">
         <div className="p-6 border-b border-white/5 bg-gradient-to-b from-white/[0.02] to-transparent">
           <div className="flex items-center gap-3">
             <Users size={16} className="text-blue-400" />
@@ -1228,26 +1228,44 @@ function SiliconValleySurface({
         </div>
       </section>
 
-      <section className="col-span-3 h-full overflow-y-auto custom-scrollbar flex flex-col gap-4">
-        <Panel title="Skill governance" icon={<BookMarked size={14} className="text-blue-400" />}>
-          <div className="space-y-3">
+      <section className="col-span-3 h-full min-h-0 overflow-y-auto custom-scrollbar flex flex-col gap-4">
+        <Panel
+          title="Skill governance"
+          icon={<BookMarked size={14} className="text-blue-400" />}
+          className="min-h-0 max-h-[30rem]"
+          contentClassName="space-y-3"
+        >
             {skills.map((skill) => (
               <div key={skill.id} className="p-4 rounded-xl border border-white/10 bg-white/[0.02]">
                 <div className="flex items-center justify-between gap-3">
-                  <div className="text-white">{skill.name}</div>
+                  <div className="text-white break-words">{skill.name}</div>
                   <div className={`text-[10px] font-mono uppercase tracking-[0.25em] ${skill.status === "approved" ? "text-green-400" : "text-amber-300"}`}>
                     {skill.status}
                   </div>
                 </div>
                 <div className="mt-2 text-sm text-white/55">{skill.description}</div>
-                <div className="mt-3 text-[10px] uppercase tracking-[0.25em] text-white/25">{skill.source} / {skill.ref}</div>
+                <div className="mt-3 grid grid-cols-2 gap-3">
+                  <MiniStat icon={<Users size={12} />} label="Owner" value={skill.governingCommitteeId || "n/a"} />
+                  <MiniStat icon={<Layers size={12} />} label="SLA" value={skill.sla || "n/a"} />
+                  <MiniStat icon={<Network size={12} />} label="Input" value={skill.inputType || "n/a"} />
+                  <MiniStat icon={<ChevronRight size={12} />} label="Output" value={skill.outputType || "n/a"} />
+                </div>
+                <div className="mt-3">
+                  <div className="text-[10px] uppercase tracking-[0.25em] text-white/25 mb-2">Required evidence</div>
+                  <div className="flex flex-wrap gap-2">
+                    {(skill.requiredEvidence || []).map((requirement) => (
+                      <span key={requirement} className="px-3 py-1 rounded-full border border-white/10 text-[10px] text-white/55">
+                        {requirement}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+                <div className="mt-3 text-[10px] uppercase tracking-[0.25em] text-white/25 break-all">{skill.source} / {skill.ref}</div>
               </div>
             ))}
-          </div>
         </Panel>
 
-        <Panel title="Backend event feed" icon={<Activity size={14} className="text-blue-400" />}>
-          <div className="space-y-3">
+        <Panel title="Backend event feed" icon={<Activity size={14} className="text-blue-400" />} className="min-h-0 max-h-[20rem]" contentClassName="space-y-3">
             {backendEvents.length === 0 && (
               <div className="text-sm text-white/45 italic">No backend events have been ingested into UACP yet.</div>
             )}
@@ -1265,11 +1283,9 @@ function SiliconValleySurface({
                 </div>
               </div>
             ))}
-          </div>
         </Panel>
 
-        <Panel title="Research ingress" icon={<LibraryBig size={14} className="text-blue-400" />}>
-          <div className="space-y-3">
+        <Panel title="Research ingress" icon={<LibraryBig size={14} className="text-blue-400" />} className="min-h-0 max-h-[20rem]" contentClassName="space-y-3">
             {researchStatus.length === 0 && (
               <div className="text-sm text-white/45 italic">No source status yet. Trigger a research refresh or compile a plan.</div>
             )}
@@ -1296,11 +1312,9 @@ function SiliconValleySurface({
                 {status.error && <div className="mt-3 text-xs text-white/45 italic">{status.error}</div>}
               </div>
             ))}
-          </div>
         </Panel>
 
-        <Panel title="Institutional metrics" icon={<Radar size={14} className="text-blue-400" />}>
-          <div className="space-y-3">
+        <Panel title="Institutional metrics" icon={<Radar size={14} className="text-blue-400" />} className="min-h-0 max-h-[20rem]" contentClassName="space-y-3">
             {(telemetry?.metrics ?? []).map((metric) => (
               <div key={metric.label} className="p-4 rounded-xl border border-white/10 bg-white/[0.02]">
                 <div className="flex items-center justify-between gap-3">
@@ -1320,7 +1334,6 @@ function SiliconValleySurface({
                 </div>
               </div>
             )}
-          </div>
         </Panel>
       </section>
     </>
@@ -1338,7 +1351,7 @@ function ArchivesSurface({
 }) {
   return (
     <>
-      <section className="col-span-7 h-full overflow-y-auto custom-scrollbar glass-panel border border-white/5">
+      <section className="col-span-7 h-full min-h-0 overflow-y-auto custom-scrollbar glass-panel border border-white/5">
         <div className="p-6 border-b border-white/5 bg-gradient-to-b from-white/[0.02] to-transparent">
           <h2 className="font-serif italic text-3xl text-white/90">Archives</h2>
           <p className="text-[10px] uppercase tracking-[0.3em] text-white/30 font-bold mt-1">
@@ -1346,7 +1359,7 @@ function ArchivesSurface({
           </p>
         </div>
 
-        <div className="p-6 space-y-4">
+        <div className="p-6 min-h-0 space-y-4">
           {archives.map((archive) => (
             <div key={archive.id} className="p-5 rounded-xl border border-white/10 bg-white/[0.02]">
               <div className="flex items-center justify-between gap-3">
@@ -1366,9 +1379,8 @@ function ArchivesSurface({
         </div>
       </section>
 
-      <section className="col-span-5 h-full overflow-y-auto custom-scrollbar flex flex-col gap-4">
-        <Panel title="Ordered events" icon={<CheckCircle2 size={14} className="text-blue-400" />}>
-          <div className="space-y-3">
+      <section className="col-span-5 h-full min-h-0 overflow-y-auto custom-scrollbar flex flex-col gap-4">
+        <Panel title="Ordered events" icon={<CheckCircle2 size={14} className="text-blue-400" />} className="min-h-0 max-h-[34rem]" contentClassName="space-y-3">
             {events.map((event) => (
               <div key={event.id} className="p-4 rounded-xl border border-white/10 bg-white/[0.02]">
                 <div className="flex items-center justify-between gap-3">
@@ -1381,7 +1393,6 @@ function ArchivesSurface({
                 </div>
               </div>
             ))}
-          </div>
         </Panel>
 
         <Panel title="Latest run evidence" icon={<Disc size={14} className="text-blue-400" />}>
@@ -1462,14 +1473,26 @@ function SummaryCard({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Panel({ title, icon, children }: { title: string; icon: ReactNode; children: ReactNode }) {
+function Panel({
+  title,
+  icon,
+  children,
+  className = "",
+  contentClassName = "",
+}: {
+  title: string;
+  icon: ReactNode;
+  children: ReactNode;
+  className?: string;
+  contentClassName?: string;
+}) {
   return (
-    <div className="glass-panel border border-white/5 overflow-hidden">
+    <div className={`glass-panel border border-white/5 overflow-hidden min-h-0 flex flex-col ${className}`}>
       <div className="p-5 border-b border-white/5 bg-gradient-to-b from-white/[0.02] to-transparent flex items-center gap-3">
         {icon}
         <div className="text-[10px] uppercase tracking-[0.25em] text-white/30 font-bold">{title}</div>
       </div>
-      <div className="p-5">{children}</div>
+      <div className={`flex-1 min-h-0 overflow-y-auto custom-scrollbar p-5 ${contentClassName}`}>{children}</div>
     </div>
   );
 }
@@ -1639,7 +1662,12 @@ function OperatingSignalDetail({
   scoreLabel: string;
 }) {
   return (
-    <Panel title="Signal detail" icon={<ChevronRight size={14} className="text-blue-400" />}>
+    <Panel
+      title="Signal detail"
+      icon={<ChevronRight size={14} className="text-blue-400" />}
+      className="max-h-[36rem]"
+      contentClassName="overflow-y-auto custom-scrollbar"
+    >
       <div className="space-y-4">
         <div>
           <div className="text-white text-xl">{signal.title}</div>
