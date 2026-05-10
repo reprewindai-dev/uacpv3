@@ -23,6 +23,7 @@
     "@types/cors": "^2.8.19",
     "@types/ws": "^8.18.1",
     "@upstash/box": "^0.4.0",
+    "@upstash/qstash": "^2.10.1",
     "@upstash/ratelimit": "^2.0.8",
     "@upstash/redis": "^1.38.0",
     "@vitejs/plugin-react": "^5.0.4",

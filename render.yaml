@@ -68,6 +68,22 @@ services:
         value: "2"
       - key: UACP_RATE_LIMIT_REFRESH_PAID_LIMIT
         value: "12"
+      - key: QSTASH_URL
+        value: https://qstash.upstash.io
+      - key: QSTASH_TOKEN
+        sync: false
+      - key: QSTASH_CURRENT_SIGNING_KEY
+        sync: false
+      - key: QSTASH_NEXT_SIGNING_KEY
+        sync: false
+      - key: UACP_PUBLIC_BASE_URL
+        value: https://uacpv3.onrender.com
+      - key: UACP_QSTASH_QUEUE_NAME
+        value: uacp-worker-conveyor
+      - key: UACP_QSTASH_CONVEYOR_SCHEDULE_ID
+        value: uacp-v3-worker-conveyor
+      - key: UACP_QSTASH_CONVEYOR_CRON
+        value: "*/5 * * * *"
       - key: DATABASE_URL
         sync: false
       - key: DATABASE_SSL_MODE

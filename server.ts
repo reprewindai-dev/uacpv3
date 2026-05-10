@@ -8,6 +8,7 @@ import cors from "cors";
 import express from "express";
 import { GoogleGenAI } from "@google/genai";
 import pg from "pg";
+import { Client as QStashClient, Receiver as QStashReceiver } from "@upstash/qstash";
 import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
 import { XMLParser } from "fast-xml-parser";
@@ -112,6 +113,14 @@ const DATABASE_URL = process.env.DATABASE_URL || "";
 const DATABASE_SSL_MODE = (process.env.DATABASE_SSL_MODE || "require").trim().toLowerCase();
 const UPSTASH_REDIS_REST_URL = process.env.UPSTASH_REDIS_REST_URL || "";
 const UPSTASH_REDIS_REST_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || "";
+const QSTASH_URL = (process.env.QSTASH_URL || "https://qstash.upstash.io").replace(/\/+$/, "");
+const QSTASH_TOKEN = process.env.QSTASH_TOKEN || "";
+const QSTASH_CURRENT_SIGNING_KEY = process.env.QSTASH_CURRENT_SIGNING_KEY || "";
+const QSTASH_NEXT_SIGNING_KEY = process.env.QSTASH_NEXT_SIGNING_KEY || "";
+const UACP_PUBLIC_BASE_URL = (process.env.UACP_PUBLIC_BASE_URL || "").replace(/\/+$/, "");
+const UACP_QSTASH_CONVEYOR_CRON = process.env.UACP_QSTASH_CONVEYOR_CRON || "*/5 * * * *";
+const UACP_QSTASH_CONVEYOR_SCHEDULE_ID = process.env.UACP_QSTASH_CONVEYOR_SCHEDULE_ID || "uacp-v3-worker-conveyor";
+const UACP_QSTASH_QUEUE_NAME = process.env.UACP_QSTASH_QUEUE_NAME || "uacp-worker-conveyor";
 const RATE_LIMIT_TRUST_ACCESS_TIER_HEADER = /^(1|true|yes|on)$/i.test(
   process.env.UACP_RATE_LIMIT_TRUST_ACCESS_TIER_HEADER || "",
 );
@@ -346,6 +355,10 @@ const rateLimitProfiles = {
 } satisfies Record<RateLimitProfile, Record<RateLimitTier, { limit: number; window: string; prefix: string }>>;
 
 const rateLimitRuntime = initializeRateLimitRuntime();
+const qstashClient = QSTASH_TOKEN ? new QStashClient({ token: QSTASH_TOKEN, baseUrl: QSTASH_URL }) : null;
+const qstashReceiver = QSTASH_CURRENT_SIGNING_KEY && QSTASH_NEXT_SIGNING_KEY
+  ? new QStashReceiver({ currentSigningKey: QSTASH_CURRENT_SIGNING_KEY, nextSigningKey: QSTASH_NEXT_SIGNING_KEY })
+  : null;
 
 const surfaces: BootstrapPayload["surfaces"] = [
   { id: "deterministic-engine", name: "Deterministic Engine", purpose: "Live signal intake, graph compilation, and run telemetry." },
@@ -8534,6 +8547,134 @@ function withPublicRateLimit(profile: RateLimitProfile): express.RequestHandler 
   };
 }
 
+function qstashRuntimeSnapshot() {
+  return {
+    enabled: Boolean(qstashClient),
+    provider: qstashClient ? "upstash-qstash" : "disabled",
+    baseUrlConfigured: Boolean(QSTASH_URL),
+    tokenConfigured: Boolean(QSTASH_TOKEN),
+    receiverVerification: Boolean(qstashReceiver),
+    publicBaseUrlConfigured: Boolean(UACP_PUBLIC_BASE_URL),
+    queueName: UACP_QSTASH_QUEUE_NAME,
+    scheduleId: UACP_QSTASH_CONVEYOR_SCHEDULE_ID,
+    scheduleCron: UACP_QSTASH_CONVEYOR_CRON,
+    webhookPath: "/api/v1/qstash/worker-conveyor",
+  };
+}
+
+function buildQStashDestination(pathname = "/api/v1/qstash/worker-conveyor") {
+  if (!UACP_PUBLIC_BASE_URL) {
+    throw new Error("UACP_PUBLIC_BASE_URL is required before publishing QStash worker conveyor messages.");
+  }
+  return `${UACP_PUBLIC_BASE_URL}${pathname.startsWith("/") ? pathname : `/${pathname}`}`;
+}
+
+function normalizeQStashWorkerIds(value: unknown) {
+  const requested = Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).map((entry) => entry.trim())
+    : [];
+  const workerIds = requested.length > 0
+    ? requested
+    : state.workerRuntime
+        .filter((runtime) => !runtime.paused && runtime.nextRunAt && new Date(runtime.nextRunAt).getTime() <= Date.now())
+        .sort((left, right) => new Date(left.nextRunAt || 0).getTime() - new Date(right.nextRunAt || 0).getTime())
+        .slice(0, UACP_SCHEDULER_MAX_RELEASE_PER_TICK)
+        .map((runtime) => runtime.workerId);
+
+  return uniqueStrings(workerIds).filter((workerId) => Boolean(workerById(workerId)));
+}
+
+async function verifyQStashRequest(req: express.Request) {
+  if (!qstashReceiver) {
+    if (process.env.NODE_ENV === "production") {
+      throw new Error("QStash receiver signing keys are not configured.");
+    }
+    return { verified: false, skipped: true };
+  }
+  const signature = req.header("upstash-signature");
+  if (!signature) throw new Error("Missing upstash-signature header.");
+  const rawBody = typeof (req as express.Request & { rawBody?: string }).rawBody === "string"
+    ? (req as express.Request & { rawBody?: string }).rawBody || JSON.stringify(req.body ?? {})
+    : JSON.stringify(req.body ?? {});
+  const protocol = req.header("x-forwarded-proto") || req.protocol || "https";
+  const host = req.header("x-forwarded-host") || req.header("host");
+  const url = host ? `${protocol}://${host}${req.originalUrl}` : undefined;
+  await qstashReceiver.verify({
+    signature,
+    body: rawBody,
+    url,
+    upstashRegion: req.header("upstash-region") || undefined,
+    clockTolerance: 60,
+  });
+  return { verified: true, skipped: false };
+}
+
+async function publishQStashWorkerConveyor(workerIds: string[], options: { delaySeconds?: number; reason?: string } = {}) {
+  if (!qstashClient) throw new Error("QStash is not configured.");
+  const destination = buildQStashDestination();
+  const delay = Math.max(0, Math.floor(options.delaySeconds || 0));
+  const response = await qstashClient.publishJSON({
+    url: destination,
+    body: {
+      workerIds,
+      reason: options.reason || "qstash-worker-conveyor",
+      publishedAt: now(),
+    },
+    headers: {
+      "Content-Type": "application/json",
+    },
+    method: "POST",
+    retries: 3,
+    delay,
+    flowControl: {
+      key: UACP_QSTASH_QUEUE_NAME,
+      parallelism: 1,
+      rate: 1,
+      period: "10s",
+    },
+    label: "uacp-worker-conveyor",
+  });
+  addEvent("QSTASH_WORKER_CONVEYOR_PUBLISHED", `Published ${workerIds.length} worker release(s) to QStash.`, "silicon-valley", {
+    workerIds,
+    delaySeconds: delay,
+    messageId: typeof response.messageId === "string" ? response.messageId : undefined,
+  });
+  await persistState();
+  return response;
+}
+
+async function createQStashConveyorSchedule() {
+  if (!qstashClient) throw new Error("QStash is not configured.");
+  const destination = buildQStashDestination();
+  const response = await qstashClient.schedules.create({
+    scheduleId: UACP_QSTASH_CONVEYOR_SCHEDULE_ID,
+    destination,
+    cron: UACP_QSTASH_CONVEYOR_CRON,
+    method: "POST",
+    body: JSON.stringify({
+      workerIds: [],
+      reason: "scheduled-qstash-worker-conveyor",
+    }),
+    headers: {
+      "Content-Type": "application/json",
+    },
+    retries: 3,
+    flowControl: {
+      key: UACP_QSTASH_QUEUE_NAME,
+      parallelism: 1,
+      rate: 1,
+      period: "10s",
+    },
+    label: "uacp-worker-conveyor-schedule",
+  });
+  addEvent("QSTASH_WORKER_CONVEYOR_SCHEDULED", "QStash worker conveyor schedule created or updated.", "silicon-valley", {
+    scheduleId: response.scheduleId,
+    cron: UACP_QSTASH_CONVEYOR_CRON,
+  });
+  await persistState();
+  return response;
+}
+
 async function refreshBackgroundResearch(reason: "startup" | "scheduled" | "manual") {
   const result = await fetchLiveResearch(DEFAULT_RESEARCH_QUERY, 3);
   state.researchSignals = result.signals;
@@ -9228,7 +9369,12 @@ async function startServer() {
 
   app.set("trust proxy", true);
   app.use(cors());
-  app.use(express.json({ limit: "1mb" }));
+  app.use(express.json({
+    limit: "1mb",
+    verify: (req, _res, buf) => {
+      (req as express.Request & { rawBody?: string }).rawBody = buf.toString("utf8");
+    },
+  }));
 
   wss.on("connection", (ws) => {
     clients.add(ws);
@@ -9281,6 +9427,7 @@ async function startServer() {
           internalKeyConfigured: Boolean(INTERNAL_API_KEY),
         },
         rateLimit: rateLimitRuntime.status,
+        qstash: qstashRuntimeSnapshot(),
         outbound: buildOutboundRuntimeSnapshot(),
       },
       registry: {
@@ -9329,6 +9476,7 @@ async function startServer() {
   app.get("/api/research-status", (_req, res) => res.json(state.researchStatus));
   app.get("/api/provider-readiness", async (_req, res) => res.json(await getProviderSnapshot()));
   app.get("/api/outbound/runtime", (_req, res) => res.json(buildOutboundRuntimeSnapshot()));
+  app.get("/api/qstash/runtime", (_req, res) => res.json(qstashRuntimeSnapshot()));
   app.get("/api/v1/internal/outbound/contacts", requireInternal, (_req, res) => res.json(state.outboundContacts));
   app.get("/api/v1/internal/outbound/messages", requireInternal, (_req, res) => res.json(state.outboundMessages));
   app.post("/api/v1/internal/outbound/contacts", requireInternal, async (req, res) => {
@@ -9398,6 +9546,66 @@ async function startServer() {
       });
     } catch (error) {
       res.status(400).json({ error: error instanceof Error ? error.message : "Unable to release outbound queue." });
+    }
+  });
+  app.post("/api/v1/internal/qstash/worker-conveyor/publish", requireInternal, async (req, res) => {
+    try {
+      const body = req.body && typeof req.body === "object" && !Array.isArray(req.body) ? req.body as Record<string, unknown> : {};
+      const workerIds = normalizeQStashWorkerIds(body.workerIds);
+      if (workerIds.length === 0) {
+        res.status(400).json({ error: "No due or requested workers are available for QStash release." });
+        return;
+      }
+      const delaySeconds = typeof body.delaySeconds === "number" ? body.delaySeconds : typeof body.delay_seconds === "number" ? body.delay_seconds : 0;
+      const response = await publishQStashWorkerConveyor(workerIds, {
+        delaySeconds,
+        reason: typeof body.reason === "string" ? body.reason : "manual-qstash-worker-conveyor",
+      });
+      res.status(202).json({
+        workerIds,
+        qstash: response,
+        runtime: qstashRuntimeSnapshot(),
+      });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Unable to publish QStash worker conveyor message." });
+    }
+  });
+  app.post("/api/v1/internal/qstash/worker-conveyor/schedule", requireInternal, async (_req, res) => {
+    try {
+      const response = await createQStashConveyorSchedule();
+      res.status(201).json({
+        schedule: response,
+        runtime: qstashRuntimeSnapshot(),
+      });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Unable to create QStash worker conveyor schedule." });
+    }
+  });
+  app.post("/api/v1/qstash/worker-conveyor", async (req, res) => {
+    try {
+      const verification = await verifyQStashRequest(req);
+      const body = req.body && typeof req.body === "object" && !Array.isArray(req.body) ? req.body as Record<string, unknown> : {};
+      const workerIds = normalizeQStashWorkerIds(body.workerIds);
+      const releasedRuns = [];
+      for (const workerId of workerIds) {
+        try {
+          releasedRuns.push(queueOperatorRun(workerId, "scheduled", typeof body.reason === "string" ? body.reason : "qstash-worker-conveyor"));
+        } catch (error) {
+          addEvent("QSTASH_WORKER_RELEASE_SKIPPED", `QStash worker release skipped for ${workerId}.`, "silicon-valley", {
+            workerId,
+            reason: error instanceof Error ? error.message : "Unknown QStash release failure.",
+          });
+        }
+      }
+      await persistState();
+      res.json({
+        ok: true,
+        verification,
+        workerIds,
+        releasedRunIds: releasedRuns.map((run) => run.id),
+      });
+    } catch (error) {
+      res.status(401).json({ error: error instanceof Error ? error.message : "Invalid QStash worker conveyor request." });
     }
   });
   app.get("/api/ssrn-signals", (_req, res) => res.json(toEngineSignals(state.researchSignals)));
