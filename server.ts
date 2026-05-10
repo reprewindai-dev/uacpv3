@@ -8745,8 +8745,30 @@ function computeTelemetrySnapshot(): TelemetrySnapshot {
 }
 
 function computeUacpPressure(telemetry: TelemetrySnapshot) {
-  const escalationPenalty = computeCurrentEscalationPenalty();
-  return clamp(telemetry.executionPressure - escalationPenalty, 0, 1);
+  const archivePressure = clamp(state.archives.length / Math.max(25, activeWorkers().length * 2), 0, 1);
+  const operatorThroughputPressure = clamp(state.operatorRuns.length / Math.max(50, activeWorkers().length * 4), 0, 1);
+  const backendSignalPressure = clamp(state.backendEvents.length / MAX_BACKEND_EVENTS, 0, 1);
+  const escalationPressure = clamp(
+    state.operatorRuns.filter((run) => run.status === "escalated" || run.escalations.length > 0).length / Math.max(6, activeWorkers().length / 2),
+    0,
+    1,
+  );
+  const liveProviderPressure = providerSnapshotCache
+    ? clamp(providerSnapshotCache.snapshot.statuses.filter((status) => status.health === "ready").length / 3, 0, 1)
+    : 0;
+  const evidencePressure = clamp(
+    (archivePressure * 0.28) +
+      (operatorThroughputPressure * 0.28) +
+      (telemetry.workerPriming * 0.18) +
+      (escalationPressure * 0.12) +
+      (telemetry.sourceHealth * 0.07) +
+      (liveProviderPressure * 0.09) +
+      (backendSignalPressure * 0.02),
+    0,
+    1,
+  );
+
+  return clamp(Math.max(telemetry.executionPressure, evidencePressure), 0, 1);
 }
 
 function captureMetricHistory() {
