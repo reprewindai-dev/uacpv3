@@ -4448,6 +4448,86 @@ function outboundContactId(kind: OutboundContact["kind"], email: string) {
   return `outc-${token}`;
 }
 
+function normalizeOutboundKind(value: unknown): OutboundContact["kind"] {
+  const text = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (["vendor", "partner", "affiliate", "channel"].includes(text)) return "vendor";
+  return "customer";
+}
+
+function normalizeOutboundWorker(kind: OutboundContact["kind"], value: unknown) {
+  const requestedWorkerId = typeof value === "string" ? value.trim() : "";
+  if (requestedWorkerId) {
+    const worker = workerById(requestedWorkerId);
+    if (!worker) throw new Error(`Unknown outbound worker ${requestedWorkerId}.`);
+    if (!["welcome", "vendor-recruiter"].includes(worker.id)) {
+      throw new Error(`Worker ${requestedWorkerId} is not allowed to execute Resend outbound.`);
+    }
+    if (kind === "customer" && worker.id !== "welcome") {
+      throw new Error("Customer outbound must be assigned to welcome.");
+    }
+    if (kind === "vendor" && worker.id !== "vendor-recruiter") {
+      throw new Error("Vendor outbound must be assigned to vendor-recruiter.");
+    }
+    return worker.id;
+  }
+  return kind === "vendor" ? "vendor-recruiter" : "welcome";
+}
+
+function enqueueOutboundContactFromPayload(candidate: unknown, source: "internal-api" | "backend-event") {
+  const record = ensureRecord(candidate, "outboundContact");
+  const email = extractOutboundEmail(record);
+  if (!email) throw new Error("outboundContact.email must be a valid email address.");
+
+  const kind = normalizeOutboundKind(record.kind ?? record.type ?? record.contact_type ?? record.contactType);
+  const assignedWorkerId = normalizeOutboundWorker(kind, record.assigned_worker_id ?? record.assignedWorkerId ?? record.worker_id ?? record.workerId);
+  const accountLabel =
+    getPayloadString(record, ["account_label", "accountLabel", "name", "contact_name", "contactName", "company", "organization", "org"]) ||
+    email.split("@")[0] ||
+    email;
+  const company = getPayloadString(record, ["company", "organization", "org", "vendor_name", "vendorName"]);
+  const workspaceId = getPayloadString(record, ["workspace_id", "workspaceId"]);
+  const sourceEventIds = Array.isArray(record.source_event_ids)
+    ? record.source_event_ids.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).map((entry) => entry.trim())
+    : Array.isArray(record.sourceEventIds)
+      ? record.sourceEventIds.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0).map((entry) => entry.trim())
+      : [];
+
+  const contact = upsertOutboundContact({
+    kind,
+    email,
+    accountLabel,
+    company,
+    workspaceId,
+    sourceEventIds,
+    assignedWorkerId,
+    status: "queued",
+    lastActivityAt: now(),
+    metadata: {
+      source,
+      sourceUrl: getPayloadString(record, ["source_url", "sourceUrl", "url"]),
+      consentBasis: getPayloadString(record, ["consent_basis", "consentBasis", "basis"]),
+      reason: getPayloadString(record, ["reason", "fit_reason", "fitReason", "notes"]),
+      tags: Array.isArray(record.tags) ? record.tags.filter((entry) => typeof entry === "string") : [],
+    },
+  });
+
+  const archive = addArchive({
+    title: `${kind === "vendor" ? "Vendor" : "Customer"} outbound contact queued`,
+    category: "run",
+    summary: `${contact.email} queued for ${assignedWorkerId} via ${source}.`,
+    lineage: [contact.id, assignedWorkerId, ...sourceEventIds],
+    metadata: {
+      contactId: contact.id,
+      email: contact.email,
+      kind: contact.kind,
+      assignedWorkerId,
+      source,
+    },
+  });
+
+  return { contact, archiveId: archive.id };
+}
+
 function upsertOutboundContact(input: Omit<OutboundContact, "id" | "createdAt" | "updatedAt" | "attemptCount"> & { attemptCount?: number }) {
   const email = sanitizeEmail(input.email);
   const id = outboundContactId(input.kind, email);
@@ -9251,6 +9331,75 @@ async function startServer() {
   app.get("/api/outbound/runtime", (_req, res) => res.json(buildOutboundRuntimeSnapshot()));
   app.get("/api/v1/internal/outbound/contacts", requireInternal, (_req, res) => res.json(state.outboundContacts));
   app.get("/api/v1/internal/outbound/messages", requireInternal, (_req, res) => res.json(state.outboundMessages));
+  app.post("/api/v1/internal/outbound/contacts", requireInternal, async (req, res) => {
+    try {
+      const body = ensureRecord(req.body, "outboundContactRequest");
+      const rawContacts = Array.isArray(body.contacts) ? body.contacts : [body.contact ?? body];
+      if (rawContacts.length === 0) {
+        res.status(400).json({ error: "At least one outbound contact is required." });
+        return;
+      }
+
+      const results = rawContacts.map((contact) => enqueueOutboundContactFromPayload(contact, "internal-api"));
+      const release = body.release === true || body.send_now === true || body.sendNow === true;
+      const assignedWorkers = uniqueStrings(results.map((result) => result.contact.assignedWorkerId));
+      const releasedRuns = [];
+      if (release) {
+        for (const workerId of assignedWorkers) {
+          try {
+            releasedRuns.push(queueOperatorRun(workerId, "manual", "outbound-contact-release"));
+          } catch (error) {
+            addEvent("OUTBOUND_RELEASE_SKIPPED", `Outbound release skipped for ${workerId}.`, "silicon-valley", {
+              workerId,
+              reason: error instanceof Error ? error.message : "Unknown release failure.",
+            });
+          }
+        }
+      }
+
+      await persistState();
+      res.status(201).json({
+        contacts: results.map((result) => result.contact),
+        archiveIds: results.map((result) => result.archiveId),
+        releasedRunIds: releasedRuns.map((run) => run.id),
+        outbound: buildOutboundRuntimeSnapshot(),
+      });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Unable to queue outbound contact." });
+    }
+  });
+  app.post("/api/v1/internal/outbound/release", requireInternal, async (req, res) => {
+    try {
+      const body = req.body && typeof req.body === "object" && !Array.isArray(req.body) ? req.body as Record<string, unknown> : {};
+      const requestedWorkers = Array.isArray(body.workerIds)
+        ? body.workerIds.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0)
+        : [];
+      const workerIds = requestedWorkers.length > 0 ? requestedWorkers : ["welcome", "vendor-recruiter"];
+      const releasedRuns = [];
+      for (const workerId of uniqueStrings(workerIds)) {
+        const worker = workerById(workerId);
+        if (!worker || !["welcome", "vendor-recruiter"].includes(worker.id)) {
+          throw new Error(`Worker ${workerId} is not allowed to execute outbound release.`);
+        }
+        if (queuedContactsForWorker(worker.id).length === 0) continue;
+        try {
+          releasedRuns.push(queueOperatorRun(worker.id, "manual", "outbound-release"));
+        } catch (error) {
+          addEvent("OUTBOUND_RELEASE_SKIPPED", `Outbound release skipped for ${worker.id}.`, "silicon-valley", {
+            workerId: worker.id,
+            reason: error instanceof Error ? error.message : "Unknown release failure.",
+          });
+        }
+      }
+      await persistState();
+      res.json({
+        releasedRunIds: releasedRuns.map((run) => run.id),
+        outbound: buildOutboundRuntimeSnapshot(),
+      });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Unable to release outbound queue." });
+    }
+  });
   app.get("/api/ssrn-signals", (_req, res) => res.json(toEngineSignals(state.researchSignals)));
   app.get("/api/plans", (_req, res) => res.json(state.plans));
   app.get("/api/runs", (_req, res) => res.json(state.runs));

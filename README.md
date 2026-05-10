@@ -220,7 +220,7 @@ If no external model provider is ready, the root app still compiles plans with t
 
 `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` enable production rate limiting for public mutation routes through Upstash Redis.
 
-`RESEND_API_KEY`, `RESEND_FROM_EMAIL`, and optional `UACP_OUTBOUND_REPLY_TO` enable governed outbound email sends for worker-backed outreach. The live outbound summary is exposed in `GET /api/outbound/runtime`, and full queue/message inspection is available on the protected internal routes.
+`RESEND_API_KEY`, `RESEND_FROM_EMAIL`, and optional `UACP_OUTBOUND_REPLY_TO` enable governed outbound email sends for worker-backed outreach. The live outbound summary is exposed in `GET /api/outbound/runtime`, and full queue/message inspection is available on the protected internal routes. Contacts can now be inserted directly through the internal outbound work-order route, then released to the `welcome` or `vendor-recruiter` workers for Resend execution.
 
 `DATABASE_URL` and optional `DATABASE_SSL_MODE` enable Postgres-backed hot storage for runtime state and governance registry. V3 keeps file fallback and also writes compressed cold snapshots under `UACP_COLD_STORAGE_DIR` so the database stays small while replayable state remains recoverable.
 
@@ -361,6 +361,38 @@ Health and verification endpoints:
 - `GET /api/v1/internal/operators/runs` with header `x-uacp-internal-key: $UACP_INTERNAL_API_KEY`
 - `GET /api/v1/internal/outbound/contacts` with header `x-uacp-internal-key: $UACP_INTERNAL_API_KEY`
 - `GET /api/v1/internal/outbound/messages` with header `x-uacp-internal-key: $UACP_INTERNAL_API_KEY`
+- `POST /api/v1/internal/outbound/contacts` with header `x-uacp-internal-key: $UACP_INTERNAL_API_KEY`
+- `POST /api/v1/internal/outbound/release` with header `x-uacp-internal-key: $UACP_INTERNAL_API_KEY`
+
+Outbound contact work-order payload:
+
+```json
+{
+  "release": true,
+  "contacts": [
+    {
+      "kind": "customer",
+      "email": "buyer@example.com",
+      "accountLabel": "Buyer Name",
+      "company": "Buyer Company",
+      "sourceUrl": "https://example.com",
+      "consentBasis": "targeted business outreach",
+      "reason": "Buyer matches governed AI workflow ICP",
+      "tags": ["paid-pilot"]
+    },
+    {
+      "kind": "vendor",
+      "email": "partner@example.com",
+      "accountLabel": "Partner Name",
+      "company": "Partner Company",
+      "sourceUrl": "https://partner.example.com",
+      "reason": "Potential implementation or distribution partner"
+    }
+  ]
+}
+```
+
+`release: true` immediately queues the assigned worker run. Without `release`, the contacts remain staged until `POST /api/v1/internal/outbound/release`.
 
 Storage model:
 
