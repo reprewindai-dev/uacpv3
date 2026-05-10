@@ -50,6 +50,24 @@ services:
         sync: false
       - key: UACP_BACKEND_TIMEOUT_MS
         value: "8000"
+      - key: UPSTASH_REDIS_REST_URL
+        sync: false
+      - key: UPSTASH_REDIS_REST_TOKEN
+        sync: false
+      - key: UACP_RATE_LIMIT_TRUST_ACCESS_TIER_HEADER
+        value: "false"
+      - key: UACP_RATE_LIMIT_PUBLIC_FREE_LIMIT
+        value: "10"
+      - key: UACP_RATE_LIMIT_PUBLIC_PAID_LIMIT
+        value: "60"
+      - key: UACP_RATE_LIMIT_HEAVY_FREE_LIMIT
+        value: "3"
+      - key: UACP_RATE_LIMIT_HEAVY_PAID_LIMIT
+        value: "20"
+      - key: UACP_RATE_LIMIT_REFRESH_FREE_LIMIT
+        value: "2"
+      - key: UACP_RATE_LIMIT_REFRESH_PAID_LIMIT
+        value: "12"
       - key: DATABASE_URL
         sync: false
       - key: DATABASE_SSL_MODE

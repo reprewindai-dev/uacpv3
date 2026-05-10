@@ -218,7 +218,7 @@ If no external model provider is ready, the root app still compiles plans with t
 
 `UACP_BACKEND_BASE_URL` points the V3 control plane at the protected backend-truth service so `/api/sunnyvale-internal` can populate Evaluation Surgeon and Hub Growth Navigator from real backend queues using `UACP_INTERNAL_API_KEY`.
 
-`UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` enable production rate limiting for public mutation routes through Upstash Redis.
+`UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` enable production rate limiting for public mutation routes through Upstash Redis. Use the Redis `REST` credentials from Upstash, not the `TCP` endpoint. The Node runtime uses `@upstash/redis` over HTTPS so it does not need Redis host, port, username, or password fields.
 
 `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, and optional `UACP_OUTBOUND_REPLY_TO` enable governed outbound email sends for worker-backed outreach. The live outbound summary is exposed in `GET /api/outbound/runtime`, and full queue/message inspection is available on the protected internal routes. Contacts can now be inserted directly through the internal outbound work-order route, then released to the `welcome` or `vendor-recruiter` workers for Resend execution.
 
