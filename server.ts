@@ -9196,6 +9196,24 @@ function buildEngineObservability() {
     ],
     horowitz_signals: [
       {
+        id: "UACP_PRESSURE",
+        value: clamp(pressure, 0, 1),
+        trend: pressure >= 0.95 ? "rising" : pressure >= 0.85 ? "stable" : "falling",
+        history: state.stats.pressureHistory.slice(-HISTORY_WINDOW).map((value) => clamp(value, 0, 1)),
+      },
+      {
+        id: "COHERENCE_TRANSITION",
+        value: clamp(telemetry.determinismScore, 0, 1),
+        trend: telemetry.determinismScore >= 0.95 ? "rising" : telemetry.determinismScore >= 0.85 ? "stable" : "falling",
+        history: state.stats.determinismHistory.slice(-HISTORY_WINDOW).map((value) => clamp(value, 0, 1)),
+      },
+      {
+        id: "SIGNAL_NOISE",
+        value: clamp(1 - telemetry.sourceHealth, 0, 1),
+        trend: telemetry.sourceHealth >= 0.9 ? "falling" : telemetry.sourceHealth >= 0.75 ? "stable" : "rising",
+        history: state.stats.sourceHealthHistory.slice(-HISTORY_WINDOW).map((value) => clamp(1 - value, 0, 1)),
+      },
+      {
         id: "RUN_COMPLETION",
         value: clamp(snapshot.latestRunIntegrity, 0, 1),
         trend: snapshot.latestRunIntegrity >= 0.95 ? "up" : snapshot.latestRunIntegrity >= 0.8 ? "stable" : "down",

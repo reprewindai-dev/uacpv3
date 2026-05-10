@@ -71,17 +71,13 @@ export function DeterministicEngineSurface({
   const primaryPlanProposals = asArray(primaryPlan?.proposals);
   const gopherAlignment = observability?.gopher_policy_alignment ?? 0;
   const quantumCoherence = observability?.quantum_coherence ?? 0;
-  const primarySignals = (observability?.horowitz_signals ?? []).filter((signal) =>
-    signal.id === "RUN_COMPLETION" || signal.id === "POLICY_ALIGNMENT" || signal.id === "EXECUTION_PRESSURE",
-  );
-  const primingScore = primarySignals.length > 0
-    ? primarySignals.reduce((sum, signal) => sum + signal.value, 0) / primarySignals.length
-    : 0;
-  const pressureLoad = primingScore;
-  const pressurePrimed = primarySignals.length === 3 && pressureLoad >= 0.85;
-  const certaintyIndex = pressurePrimed ? "999999" : "0.00000";
+  const pressureSignal = (observability?.horowitz_signals ?? []).find((signal) => signal.id === "UACP_PRESSURE")
+    || (observability?.horowitz_signals ?? []).find((signal) => signal.id === "EXECUTION_PRESSURE");
+  const pressureLoad = Math.max(observability?.uacp_pressure ?? 0, pressureSignal?.value ?? 0);
+  const pressurePrimed = pressureLoad >= 0.85;
+  const certaintyIndex = pressurePrimed ? "99999" : "0.00000";
   const entropyBudget = `${Math.max(0, 100 - quantumCoherence).toFixed(1)}%`;
-  const determinismRatio = pressurePrimed ? "999999" : "0.00000";
+  const determinismRatio = pressurePrimed ? "99999" : "0.00000";
   const primeState = pressureLoad >= 0.95 ? "PRIME LOCK" : pressurePrimed ? "PRESSURE COOKER" : "NO SIGNAL";
 
   const mappedNodes = useMemo(
