@@ -295,7 +295,7 @@ Optional environment variables:
 
 ## Upstash Box runtime
 
-For the first multi-worker runtime gateway Box, use the dedicated pillar-council entrypoint:
+For the hot control box, use the dedicated pillar-council entrypoint:
 
 ```bash
 cd /workspace/home/uacpv3 && npm install && npm run build && npm run worker:pillar-council
@@ -307,6 +307,38 @@ This keeps the existing V3 UI/API/WebSocket/control-plane behavior, but boots it
 - `UACP_RUNTIME_MODE=pillar_council`
 - `UACP_WORKER_GROUP=pillar_council`
 - `UACP_ARCHIVE_WRITE_REQUIRED=true`
+
+Committee box topology:
+
+- `pillar_council` (hot)
+  - workers: `gauge`, `ledger`, `sentinel`, `mirror`, `pulse`, `sheriff`, `polish`, `oracle`, `glide`
+  - role: governance, truth, observability, assurance, replay integrity
+- `growth_sales` (warm)
+  - workers: `signal`, `mint`, `scout`, `spyglass`, `raider`, `welcome`
+  - startup: `npm run worker:growth-sales`
+- `operations_intake` (warm)
+  - workers: `herald`, `harvest`, `bouncer`, `arbiter`
+  - startup: `npm run worker:operations-intake`
+- `builder_systems` (warm)
+  - workers: `builder-scout`, `builder-forge`, `builder-arbiter`
+  - startup: `npm run worker:builder-systems`
+- `vendor_network` (warm)
+  - workers: `vendor-scout`, `vendor-recruiter`, `vendor-auditor`
+  - startup: `npm run worker:vendor-network`
+
+Wake rules:
+
+- `growth_sales`: outbound queue pressure, qualified pipeline pressure, competitor movement
+- `operations_intake`: backend-event bursts, intake backlog, routing exceptions
+- `builder_systems`: accepted build backlog, automation expansion, delivery blockers
+- `vendor_network`: partner queue, vendor qualification demand, channel expansion
+
+Handoff rules:
+
+- `operations_intake` -> `growth_sales` when buyer motion is qualified
+- `growth_sales` -> `vendor_network` when partner or affiliate path is better than direct sale
+- `growth_sales` -> `builder_systems` when tooling or delivery blockers stop conversion
+- all warm boxes -> `pillar_council` when policy, truth, replay, or risk thresholds are hit
 
 The runtime logs:
 
@@ -323,6 +355,7 @@ Health and verification endpoints:
 
 - `GET /api/health`
 - `GET /api/bootstrap`
+- `GET /api/box-topology`
 - `GET /api/outbound/runtime`
 - `GET /api/v1/internal/operators` with header `x-uacp-internal-key: $UACP_INTERNAL_API_KEY`
 - `GET /api/v1/internal/operators/runs` with header `x-uacp-internal-key: $UACP_INTERNAL_API_KEY`

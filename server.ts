@@ -126,6 +126,53 @@ const OLLAMA_API_KEY = process.env.OLLAMA_API_KEY || "";
 const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "";
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-2.5-flash";
 const { Pool } = pg;
+const workerGroupBlueprints: WorkerGroupBlueprint[] = [
+  {
+    id: "pillar_council",
+    label: "Pillar Council",
+    runtimeMode: "pillar_council",
+    boxRole: "hot",
+    workerIds: ["gauge", "ledger", "sentinel", "mirror", "pulse", "sheriff", "polish", "oracle", "glide"],
+    wakeTriggers: ["minimum-live cadence", "governance pressure", "truth drift", "freshness decay"],
+    handoffTargets: ["growth_sales", "operations_intake", "builder_systems", "vendor_network"],
+  },
+  {
+    id: "growth_sales",
+    label: "Growth & Sales",
+    runtimeMode: "growth_sales",
+    boxRole: "warm",
+    workerIds: ["signal", "mint", "scout", "spyglass", "raider", "welcome"],
+    wakeTriggers: ["qualified pipeline pressure", "campaign backlog", "outbound queue", "competitor movement"],
+    handoffTargets: ["pillar_council", "operations_intake", "vendor_network"],
+  },
+  {
+    id: "operations_intake",
+    label: "Operations & Intake",
+    runtimeMode: "operations_intake",
+    boxRole: "warm",
+    workerIds: ["herald", "harvest", "bouncer", "arbiter"],
+    wakeTriggers: ["intake backlog", "backend events", "admission queue pressure", "routing exceptions"],
+    handoffTargets: ["pillar_council", "growth_sales", "builder_systems"],
+  },
+  {
+    id: "builder_systems",
+    label: "Builder Systems",
+    runtimeMode: "builder_systems",
+    boxRole: "warm",
+    workerIds: ["builder-scout", "builder-forge", "builder-arbiter"],
+    wakeTriggers: ["build backlog", "tool gap accepted", "automation expansion", "delivery blockers"],
+    handoffTargets: ["pillar_council", "operations_intake"],
+  },
+  {
+    id: "vendor_network",
+    label: "Vendor Network",
+    runtimeMode: "vendor_network",
+    boxRole: "warm",
+    workerIds: ["vendor-scout", "vendor-recruiter", "vendor-auditor"],
+    wakeTriggers: ["partner queue", "vendor qualification demand", "channel expansion", "affiliate routing"],
+    handoffTargets: ["pillar_council", "growth_sales", "operations_intake"],
+  },
+];
 const REQUESTED_MODEL_PROVIDER = String(process.env.UACP_MODEL_PROVIDER || "").toLowerCase();
 const GEMINI_PRIMARY_ENABLED = process.env.UACP_ENABLE_GEMINI_PRIMARY === "true";
 const ALLOW_GEMINI_FALLBACK = process.env.ALLOW_GEMINI_FALLBACK === "true";
@@ -1074,6 +1121,16 @@ type StorageRuntimeStatus = {
   lastError: string | null;
 };
 
+type WorkerGroupBlueprint = {
+  id: string;
+  label: string;
+  runtimeMode: string;
+  boxRole: "hot" | "warm";
+  workerIds: string[];
+  wakeTriggers: string[];
+  handoffTargets: string[];
+};
+
 type ResearchFetchResult = {
   signals: ResearchSignal[];
   statuses: ResearchSourceStatus[];
@@ -1370,22 +1427,49 @@ function activeEscalationRules() {
   return governanceRegistry.escalationRules;
 }
 
+function currentWorkerGroupBlueprint() {
+  return workerGroupBlueprints.find((group) => group.id === WORKER_GROUP || group.runtimeMode === RUNTIME_MODE);
+}
+
+function currentWorkerIds() {
+  const blueprint = currentWorkerGroupBlueprint();
+  return blueprint ? new Set(blueprint.workerIds) : null;
+}
+
 function activeOperatorCommittees() {
-  return governanceRegistry.operatorCommittees;
+  const workerIds = currentWorkerIds();
+  if (!workerIds) {
+    return governanceRegistry.operatorCommittees;
+  }
+  return governanceRegistry.operatorCommittees
+    .map((committee) => ({
+      ...committee,
+      workerIds: committee.workerIds.filter((workerId) => workerIds.has(workerId)),
+    }))
+    .filter((committee) => committee.workerIds.length > 0);
 }
 
 function activeWorkers() {
-  return governanceRegistry.workers;
+  const workerIds = currentWorkerIds();
+  if (!workerIds) {
+    return governanceRegistry.workers;
+  }
+  return governanceRegistry.workers.filter((worker) => workerIds.has(worker.id));
 }
 
 function minimumLiveWorkerIds() {
-  return governanceRegistry.minimumLiveWorkerIds;
+  const workerIds = currentWorkerIds();
+  if (!workerIds) {
+    return governanceRegistry.minimumLiveWorkerIds;
+  }
+  return governanceRegistry.minimumLiveWorkerIds.filter((workerId) => workerIds.has(workerId));
 }
 
 function logStartupContext(providerSnapshot: ModelProviderSnapshot) {
   const providerStatuses = providerSnapshot.statuses
     .map((status) => `${status.id}:${status.health}${status.active ? "*" : ""}`)
     .join(", ");
+  const blueprint = currentWorkerGroupBlueprint();
 
   console.log("[uacp] UACP V3 control plane starting");
   console.log(`[uacp] box name: ${BOX_NAME}`);
@@ -1404,6 +1488,11 @@ function logStartupContext(providerSnapshot: ModelProviderSnapshot) {
   console.log(
     `[uacp] provider readiness: default=${providerSnapshot.defaultProvider} active=${providerSnapshot.activeProvider} statuses=${providerStatuses} internalApi=${INTERNAL_API_KEY ? "ready" : "disabled"} adminApi=${ADMIN_API_KEY ? "ready" : "disabled"} archiveWrite=${ARCHIVE_WRITE_REQUIRED ? "required" : "optional"} workerGroup=${WORKER_GROUP}`,
   );
+  if (blueprint) {
+    console.log(
+      `[uacp] topology: role=${blueprint.boxRole} label=${blueprint.label} workers=${blueprint.workerIds.join(",")} wakeTriggers=${blueprint.wakeTriggers.join(" | ")}`,
+    );
+  }
 }
 
 function workerById(workerId: string) {
@@ -4260,6 +4349,33 @@ function buildCommandCenterSnapshot(): CommandCenterSnapshot {
       enterpriseCheckCount: enterpriseChecks.length,
       passingEnterpriseChecks: enterpriseChecks.filter((check) => check.status === "pass").length,
     },
+  };
+}
+
+function buildBoxTopologySnapshot() {
+  return {
+    current: currentWorkerGroupBlueprint()
+      ? {
+          ...currentWorkerGroupBlueprint(),
+          activeWorkerCount: activeWorkers().length,
+          minimumLiveWorkerIds: minimumLiveWorkerIds(),
+          committeeIds: activeOperatorCommittees().map((committee) => committee.id),
+        }
+      : {
+          id: WORKER_GROUP,
+          label: "Control Plane",
+          runtimeMode: RUNTIME_MODE,
+          boxRole: "hot",
+          activeWorkerCount: activeWorkers().length,
+          minimumLiveWorkerIds: minimumLiveWorkerIds(),
+          committeeIds: activeOperatorCommittees().map((committee) => committee.id),
+        },
+    groups: workerGroupBlueprints.map((group) => ({
+      ...group,
+      committeeIds: governanceRegistry.operatorCommittees
+        .filter((committee) => committee.workerIds.some((workerId) => group.workerIds.includes(workerId)))
+        .map((committee) => committee.id),
+    })),
   };
 }
 
@@ -9052,6 +9168,7 @@ async function startServer() {
           ...storageRuntime,
           coldStorageDir: COLD_STORAGE_DIR,
         },
+        topology: buildBoxTopologySnapshot().current,
         auditChain: {
           eventHeadHash: latestEventHash() || null,
           archiveHeadHash: latestArchiveHash() || null,
@@ -9104,6 +9221,7 @@ async function startServer() {
   app.get("/api/backend-summary", (_req, res) => res.json(state.backendSummary));
   app.get("/api/backend-events", (_req, res) => res.json(state.backendEvents));
   app.get("/api/command-center", (_req, res) => res.json(buildCommandCenterSnapshot()));
+  app.get("/api/box-topology", (_req, res) => res.json(buildBoxTopologySnapshot()));
   app.get("/api/sunnyvale-internal", async (_req, res) => res.json(await buildSunnyvaleInternalSnapshot()));
   app.get("/api/research-signals", (_req, res) => res.json(state.researchSignals));
   app.get("/api/research-status", (_req, res) => res.json(state.researchStatus));

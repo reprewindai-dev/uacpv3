@@ -8,6 +8,10 @@
     "build": "node ./node_modules/vite/bin/vite.js build",
     "start": "node ./node_modules/tsx/dist/cli.mjs server.ts",
     "worker:pillar-council": "node ./node_modules/tsx/dist/cli.mjs src/workers/pillar-council.ts",
+    "worker:growth-sales": "node ./node_modules/tsx/dist/cli.mjs src/workers/growth-sales.ts",
+    "worker:operations-intake": "node ./node_modules/tsx/dist/cli.mjs src/workers/operations-intake.ts",
+    "worker:builder-systems": "node ./node_modules/tsx/dist/cli.mjs src/workers/builder-systems.ts",
+    "worker:vendor-network": "node ./node_modules/tsx/dist/cli.mjs src/workers/vendor-network.ts",
     "box:setup": "node scripts/setup-upstash-box.mjs",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "lint": "node ./node_modules/typescript/bin/tsc --noEmit"
