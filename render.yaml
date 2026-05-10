@@ -84,6 +84,12 @@ services:
         value: uacp-v3-worker-conveyor
       - key: UACP_QSTASH_CONVEYOR_CRON
         value: "*/5 * * * *"
+      - key: UPSTASH_SEARCH_REST_URL
+        sync: false
+      - key: UPSTASH_SEARCH_REST_TOKEN
+        sync: false
+      - key: UACP_SEARCH_INDEX
+        value: default
       - key: DATABASE_URL
         sync: false
       - key: DATABASE_SSL_MODE

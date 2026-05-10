@@ -203,6 +203,9 @@ UACP_PUBLIC_BASE_URL=https://uacpv3.onrender.com
 UACP_QSTASH_QUEUE_NAME=uacp-worker-conveyor
 UACP_QSTASH_CONVEYOR_SCHEDULE_ID=uacp-v3-worker-conveyor
 UACP_QSTASH_CONVEYOR_CRON="*/5 * * * *"
+UPSTASH_SEARCH_REST_URL=
+UPSTASH_SEARCH_REST_TOKEN=
+UACP_SEARCH_INDEX=default
 ```
 
 V3 now supports four model providers:
@@ -229,6 +232,8 @@ If no external model provider is ready, the root app still compiles plans with t
 `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` enable production rate limiting for public mutation routes through Upstash Redis. Use the Redis `REST` credentials from Upstash, not the `TCP` endpoint. The Node runtime uses `@upstash/redis` over HTTPS so it does not need Redis host, port, username, or password fields.
 
 `QSTASH_URL`, `QSTASH_TOKEN`, `QSTASH_CURRENT_SIGNING_KEY`, and `QSTASH_NEXT_SIGNING_KEY` enable the durable worker conveyor. Use the QStash Request Builder/Quickstart values directly. QStash publishes signed POST requests to `POST /api/v1/qstash/worker-conveyor`, which releases due workers one lane at a time instead of burst-firing every worker in-process. `UACP_PUBLIC_BASE_URL` must be the public Render URL.
+
+`UPSTASH_SEARCH_REST_URL`, `UPSTASH_SEARCH_REST_TOKEN`, and `UACP_SEARCH_INDEX=default` enable the Upstash Search document layer. This is where workers can index and query real buyer, vendor, market, evidence, and tool documents instead of depending only on in-memory research lists. The Upstash console index you showed is `default`, so V3 now defaults to that index unless overridden per request.
 
 `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, and optional `UACP_OUTBOUND_REPLY_TO` enable governed outbound email sends for worker-backed outreach. The live outbound summary is exposed in `GET /api/outbound/runtime`, and full queue/message inspection is available on the protected internal routes. Contacts can now be inserted directly through the internal outbound work-order route, then released to the `welcome` or `vendor-recruiter` workers for Resend execution.
 
@@ -368,6 +373,7 @@ Health and verification endpoints:
 - `GET /api/box-topology`
 - `GET /api/outbound/runtime`
 - `GET /api/qstash/runtime`
+- `GET /api/search/runtime`
 - `GET /api/v1/internal/operators` with header `x-uacp-internal-key: $UACP_INTERNAL_API_KEY`
 - `GET /api/v1/internal/operators/runs` with header `x-uacp-internal-key: $UACP_INTERNAL_API_KEY`
 - `GET /api/v1/internal/outbound/contacts` with header `x-uacp-internal-key: $UACP_INTERNAL_API_KEY`
@@ -377,6 +383,8 @@ Health and verification endpoints:
 - `POST /api/v1/internal/qstash/worker-conveyor/publish` with header `x-uacp-internal-key: $UACP_INTERNAL_API_KEY`
 - `POST /api/v1/internal/qstash/worker-conveyor/schedule` with header `x-uacp-internal-key: $UACP_INTERNAL_API_KEY`
 - `POST /api/v1/qstash/worker-conveyor` signed by QStash; do not call this route manually in production
+- `POST /api/v1/internal/search/documents` with header `x-uacp-internal-key: $UACP_INTERNAL_API_KEY`
+- `POST /api/v1/internal/search/query` with header `x-uacp-internal-key: $UACP_INTERNAL_API_KEY`
 
 Outbound contact work-order payload:
 

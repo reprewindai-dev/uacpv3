@@ -11,6 +11,7 @@ import pg from "pg";
 import { Client as QStashClient, Receiver as QStashReceiver } from "@upstash/qstash";
 import { Ratelimit } from "@upstash/ratelimit";
 import { Redis } from "@upstash/redis";
+import { Search } from "@upstash/search";
 import { XMLParser } from "fast-xml-parser";
 import { createServer as createViteServer } from "vite";
 import { WebSocket, WebSocketServer } from "ws";
@@ -121,6 +122,9 @@ const UACP_PUBLIC_BASE_URL = (process.env.UACP_PUBLIC_BASE_URL || "").replace(/\
 const UACP_QSTASH_CONVEYOR_CRON = process.env.UACP_QSTASH_CONVEYOR_CRON || "*/5 * * * *";
 const UACP_QSTASH_CONVEYOR_SCHEDULE_ID = process.env.UACP_QSTASH_CONVEYOR_SCHEDULE_ID || "uacp-v3-worker-conveyor";
 const UACP_QSTASH_QUEUE_NAME = process.env.UACP_QSTASH_QUEUE_NAME || "uacp-worker-conveyor";
+const UPSTASH_SEARCH_REST_URL = process.env.UPSTASH_SEARCH_REST_URL || "";
+const UPSTASH_SEARCH_REST_TOKEN = process.env.UPSTASH_SEARCH_REST_TOKEN || "";
+const UACP_SEARCH_INDEX = process.env.UACP_SEARCH_INDEX || "default";
 const RATE_LIMIT_TRUST_ACCESS_TIER_HEADER = /^(1|true|yes|on)$/i.test(
   process.env.UACP_RATE_LIMIT_TRUST_ACCESS_TIER_HEADER || "",
 );
@@ -359,6 +363,13 @@ const qstashClient = QSTASH_TOKEN ? new QStashClient({ token: QSTASH_TOKEN, base
 const qstashReceiver = QSTASH_CURRENT_SIGNING_KEY && QSTASH_NEXT_SIGNING_KEY
   ? new QStashReceiver({ currentSigningKey: QSTASH_CURRENT_SIGNING_KEY, nextSigningKey: QSTASH_NEXT_SIGNING_KEY })
   : null;
+const searchClient = UPSTASH_SEARCH_REST_URL && UPSTASH_SEARCH_REST_TOKEN
+  ? new Search({ url: UPSTASH_SEARCH_REST_URL, token: UPSTASH_SEARCH_REST_TOKEN })
+  : null;
+
+function getSearchIndex(indexName = UACP_SEARCH_INDEX) {
+  return searchClient?.index<Record<string, unknown>, Record<string, unknown>>(indexName) || null;
+}
 
 const surfaces: BootstrapPayload["surfaces"] = [
   { id: "deterministic-engine", name: "Deterministic Engine", purpose: "Live signal intake, graph compilation, and run telemetry." },
@@ -8562,6 +8573,98 @@ function qstashRuntimeSnapshot() {
   };
 }
 
+function searchRuntimeSnapshot() {
+  return {
+    enabled: Boolean(searchClient),
+    provider: searchClient ? "upstash-search" : "disabled",
+    urlConfigured: Boolean(UPSTASH_SEARCH_REST_URL),
+    tokenConfigured: Boolean(UPSTASH_SEARCH_REST_TOKEN),
+    index: UACP_SEARCH_INDEX,
+  };
+}
+
+function normalizeSearchDocument(candidate: unknown) {
+  const record = ensureRecord(candidate, "searchDocument");
+  const id = ensureString(record.id ?? record.document_id ?? record.documentId ?? createId("doc"), "searchDocument.id");
+  const type = typeof record.type === "string" ? record.type.trim() : "document";
+  const title = typeof record.title === "string" && record.title.trim()
+    ? record.title.trim()
+    : typeof record.name === "string" && record.name.trim()
+      ? record.name.trim()
+      : id;
+  const text = typeof record.text === "string" && record.text.trim()
+    ? record.text.trim()
+    : typeof record.body === "string" && record.body.trim()
+      ? record.body.trim()
+      : typeof record.description === "string" && record.description.trim()
+        ? record.description.trim()
+        : title;
+  const url = getPayloadString(record, ["url", "source_url", "sourceUrl"]);
+  const source = getPayloadString(record, ["source", "provider"]) || "uacp";
+  const tags = Array.isArray(record.tags) ? record.tags.filter((entry): entry is string => typeof entry === "string") : [];
+  const metadata = record.metadata && typeof record.metadata === "object" && !Array.isArray(record.metadata)
+    ? record.metadata as Record<string, unknown>
+    : {};
+
+  return {
+    id,
+    content: {
+      title,
+      text,
+      type,
+      source,
+      url: url || "",
+      tags,
+    },
+    metadata: {
+      ...metadata,
+      type,
+      source,
+      url: url || "",
+      indexedAt: now(),
+    },
+  };
+}
+
+async function upsertSearchDocuments(documents: unknown[], indexName = UACP_SEARCH_INDEX) {
+  const index = getSearchIndex(indexName);
+  if (!index) throw new Error("Upstash Search is not configured.");
+  const normalized = documents.map(normalizeSearchDocument);
+  await index.upsert(normalized);
+  const archive = addArchive({
+    title: "Search documents indexed",
+    category: "research",
+    summary: `${normalized.length} document(s) indexed into Upstash Search index ${indexName}.`,
+    lineage: normalized.map((document) => document.id),
+    metadata: {
+      index: indexName,
+      documentIds: normalized.map((document) => document.id),
+    },
+  });
+  await persistState();
+  return { documents: normalized, archiveId: archive.id };
+}
+
+async function searchDocuments(query: string, limit: number, filter?: string, indexName = UACP_SEARCH_INDEX) {
+  const index = getSearchIndex(indexName);
+  if (!index) throw new Error("Upstash Search is not configured.");
+  const results = await index.search({
+    query,
+    limit: Math.min(Math.max(limit, 1), 25),
+    ...(filter ? { filter } : {}),
+    semanticWeight: 0.5,
+    inputEnrichment: true,
+  });
+  addEvent("UPSTASH_SEARCH_QUERY", `Upstash Search returned ${results.length} result(s).`, "deterministic-engine", {
+    query,
+    limit,
+    filter,
+    index: indexName,
+  });
+  await persistState();
+  return results;
+}
+
 function buildQStashDestination(pathname = "/api/v1/qstash/worker-conveyor") {
   if (!UACP_PUBLIC_BASE_URL) {
     throw new Error("UACP_PUBLIC_BASE_URL is required before publishing QStash worker conveyor messages.");
@@ -9428,6 +9531,7 @@ async function startServer() {
         },
         rateLimit: rateLimitRuntime.status,
         qstash: qstashRuntimeSnapshot(),
+        search: searchRuntimeSnapshot(),
         outbound: buildOutboundRuntimeSnapshot(),
       },
       registry: {
@@ -9477,6 +9581,47 @@ async function startServer() {
   app.get("/api/provider-readiness", async (_req, res) => res.json(await getProviderSnapshot()));
   app.get("/api/outbound/runtime", (_req, res) => res.json(buildOutboundRuntimeSnapshot()));
   app.get("/api/qstash/runtime", (_req, res) => res.json(qstashRuntimeSnapshot()));
+  app.get("/api/search/runtime", (_req, res) => res.json(searchRuntimeSnapshot()));
+  app.post("/api/v1/internal/search/documents", requireInternal, async (req, res) => {
+    try {
+      const body = ensureRecord(req.body, "searchIndexRequest");
+      const rawDocuments = Array.isArray(body.documents) ? body.documents : [body.document ?? body];
+      if (rawDocuments.length === 0) {
+        res.status(400).json({ error: "At least one search document is required." });
+        return;
+      }
+      const indexName = typeof body.index === "string" && body.index.trim() ? body.index.trim() : UACP_SEARCH_INDEX;
+      const result = await upsertSearchDocuments(rawDocuments, indexName);
+      res.status(201).json({
+        index: indexName,
+        indexed: result.documents.length,
+        documentIds: result.documents.map((document) => document.id),
+        archiveId: result.archiveId,
+        runtime: searchRuntimeSnapshot(),
+      });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Unable to index search documents." });
+    }
+  });
+  app.post("/api/v1/internal/search/query", requireInternal, async (req, res) => {
+    try {
+      const body = ensureRecord(req.body, "searchQueryRequest");
+      const query = ensureString(body.query, "searchQueryRequest.query");
+      const limit = typeof body.limit === "number" ? body.limit : 10;
+      const filter = typeof body.filter === "string" && body.filter.trim() ? body.filter.trim() : undefined;
+      const indexName = typeof body.index === "string" && body.index.trim() ? body.index.trim() : UACP_SEARCH_INDEX;
+      const results = await searchDocuments(query, limit, filter, indexName);
+      res.json({
+        index: indexName,
+        query,
+        count: results.length,
+        results,
+        runtime: searchRuntimeSnapshot(),
+      });
+    } catch (error) {
+      res.status(400).json({ error: error instanceof Error ? error.message : "Unable to query search documents." });
+    }
+  });
   app.get("/api/v1/internal/outbound/contacts", requireInternal, (_req, res) => res.json(state.outboundContacts));
   app.get("/api/v1/internal/outbound/messages", requireInternal, (_req, res) => res.json(state.outboundMessages));
   app.post("/api/v1/internal/outbound/contacts", requireInternal, async (req, res) => {
