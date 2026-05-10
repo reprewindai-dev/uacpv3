@@ -13,6 +13,7 @@
     "worker:builder-systems": "node ./node_modules/tsx/dist/cli.mjs src/workers/builder-systems.ts",
     "worker:vendor-network": "node ./node_modules/tsx/dist/cli.mjs src/workers/vendor-network.ts",
     "box:setup": "node scripts/setup-upstash-box.mjs",
+    "box:setup:fleet": "node scripts/setup-upstash-fleet.mjs",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "lint": "node ./node_modules/typescript/bin/tsc --noEmit"
   },

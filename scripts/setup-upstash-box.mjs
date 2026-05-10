@@ -1,15 +1,21 @@
 import { Box } from "@upstash/box";
 import crypto from "node:crypto";
+import { buildBootstrapCommand, buildManualLaunchCommand, findBoxSpec } from "./upstash-box-fleet.config.mjs";
 
 const apiKey = process.env.UPSTASH_BOX_API_KEY || "";
 const boxId = process.env.UPSTASH_BOX_ID || "";
 const boxName = process.env.UPSTASH_BOX_NAME || process.env.UACP_BOX_NAME || "uacp-pillar-council";
+const runtimeMode = process.env.UACP_RUNTIME_MODE || "";
+const workerGroup = process.env.UACP_WORKER_GROUP || "";
+const boxSpec = findBoxSpec({ boxName, runtimeMode, workerGroup });
 let internalApiKey = process.env.UACP_INTERNAL_API_KEY || "";
 let internalApiKeySource = process.env.UACP_INTERNAL_API_KEY ? "local-env" : "unknown";
 const port = Number(process.env.UACP_BOX_PORT || process.env.PORT || 3000);
+const repoUrl = process.env.UPSTASH_BOX_GIT_URL || "";
+const repoRef = process.env.UPSTASH_BOX_GIT_REF || "main";
 const initCommand =
   process.env.UPSTASH_BOX_INIT_COMMAND ||
-  "cd /workspace/home/uacpv3 && npm install && npm run build && npm run worker:pillar-council";
+  buildBootstrapCommand(boxSpec, { repoUrl, repoRef });
 const setInitCommand = toBool(process.env.UPSTASH_BOX_SET_INIT_COMMAND, true);
 const restartIfInitChanged = toBool(process.env.UPSTASH_BOX_RESTART_IF_INIT_CHANGED, true);
 const resumeIfPaused = toBool(process.env.UPSTASH_BOX_RESUME_IF_PAUSED, true);
@@ -309,12 +315,7 @@ async function writeRuntimeDotEnv() {
 }
 
 async function startKeepAliveProcess() {
-  const script = [
-    "cd /workspace/home/uacpv3",
-    "mkdir -p /workspace/home/uacpv3",
-    "nohup npm run worker:pillar-council >/workspace/home/uacpv3/pillar-council.log 2>&1 </dev/null &",
-    "echo started",
-  ].join("; ");
+  const script = buildManualLaunchCommand(boxSpec);
 
   await box.exec.command(`sh -lc ${shellQuote(shellLine(script))}`);
 }

@@ -376,6 +376,12 @@ If you want to drive the Box from your local machine with the Upstash Box SDK, u
 npm run box:setup
 ```
 
+To create or reconcile the full hot/warm committee fleet in one pass, use:
+
+```bash
+npm run box:setup:fleet
+```
+
 That script reads:
 
 - `UPSTASH_BOX_API_KEY`
@@ -389,6 +395,28 @@ It will connect to the Box, ensure the pillar-council init command, resume or re
 - `GET /api/bootstrap`
 - `GET /api/v1/internal/operators`
 - `GET /api/v1/internal/operators/runs`
+
+The fleet setup command reads the same base secrets and also:
+
+- auto-detects the local git `origin` URL and branch unless you override them with `UPSTASH_BOX_GIT_URL` and `UPSTASH_BOX_GIT_REF`
+- creates missing committee boxes as `keepAlive` node boxes
+- bootstraps `/workspace/home/uacpv3`
+- writes per-box runtime `.env`
+- verifies `GET /api/box-topology` and internal operator endpoints on every lane
+
+Supported fleet boxes:
+
+- `uacp-pillar-council`
+- `uacp-growth-sales`
+- `uacp-operations-intake`
+- `uacp-builder-systems`
+- `uacp-vendor-network`
+
+To limit reconciliation to a subset, set:
+
+```bash
+UACP_BOX_FLEET=pillar_council,growth_sales
+```
 
 For the full access and recovery procedure, including SSH sign-in, the canonical Box name, the live host id, and the stale-runtime replacement path, use:
 

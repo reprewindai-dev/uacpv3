@@ -2,15 +2,21 @@
 
 ## Purpose
 
-This runbook is the canonical access and alignment path for the live `uacp-pillar-council` Box. Use it when an agent needs to sign in, verify runtime state, or force the Box onto the current production commit.
+This runbook is the canonical access and alignment path for the live UACP Box fleet. Use it when an agent needs to sign in, verify runtime state, or force the committee boxes onto the current production commit.
 
 ## Canonical Box Identity
 
-- Box name: `uacp-pillar-council`
-- Current Box host id: `sought-python-57910`
-- SSH target: `ssh sought-python-57910@us-east-1.box.upstash.com`
-- Runtime entrypoint: `npm run worker:pillar-council`
-- Runtime port: `3000`
+- Hot box:
+  - Box name: `uacp-pillar-council`
+  - Current Box host id: `sought-python-57910`
+  - SSH target: `ssh sought-python-57910@us-east-1.box.upstash.com`
+  - Runtime entrypoint: `npm run worker:pillar-council`
+  - Runtime port: `3000`
+- Warm fleet:
+  - `uacp-growth-sales`
+  - `uacp-operations-intake`
+  - `uacp-builder-systems`
+  - `uacp-vendor-network`
 
 Use the Box name as the primary handle. Only fall back to the host id when you need direct SSH.
 
@@ -60,6 +66,12 @@ From the repo root:
 npm run box:setup
 ```
 
+For the full fleet:
+
+```bash
+npm run box:setup:fleet
+```
+
 The setup script:
 
 - connects to the Box
@@ -72,6 +84,26 @@ The setup script:
   - `/api/bootstrap`
   - `/api/v1/internal/operators`
   - `/api/v1/internal/operators/runs`
+
+The fleet setup script:
+
+- creates missing warm committee boxes as keep-alive node boxes
+- auto-detects the repo `origin` URL and current branch
+- clones or realigns `/workspace/home/uacpv3`
+- sets the correct startup command for each committee lane
+- writes per-box runtime `.env`
+- verifies:
+  - `/api/health`
+  - `/api/bootstrap`
+  - `/api/box-topology`
+  - `/api/v1/internal/operators`
+  - `/api/v1/internal/operators/runs`
+
+Fleet filter:
+
+```bash
+UACP_BOX_FLEET=pillar_council,growth_sales npm run box:setup:fleet
+```
 
 ## Direct Box Startup Command
 
@@ -96,7 +128,12 @@ Use this when the Box is behind repo `main` or serving stale runtime state.
    - `npm install`
    - `npm run build`
 5. Replace the active listener on port `3000`.
-6. Start `npm run worker:pillar-council`.
+6. Start the correct runtime:
+   - `npm run worker:pillar-council`
+   - `npm run worker:growth-sales`
+   - `npm run worker:operations-intake`
+   - `npm run worker:builder-systems`
+   - `npm run worker:vendor-network`
 7. Re-verify health and governance endpoints.
 
 ## Verification Endpoints
