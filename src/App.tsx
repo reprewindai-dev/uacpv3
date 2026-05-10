@@ -322,6 +322,7 @@ export default function App() {
       }));
       setSelectedPlanId(plan.id);
       setIntent("");
+      await loadAll();
       return plan;
     } finally {
       setSubmitting(false);

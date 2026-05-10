@@ -5712,6 +5712,40 @@ function queueOperatorRun(workerId: string, trigger: "manual" | "scheduled" | "b
   return run;
 }
 
+function releasePlanSearchWorkers(plan: InstitutionalPlan) {
+  const workerIds = uniqueStrings([
+    "signal",
+    "scout",
+    "builder-scout",
+    "welcome",
+    ...(plan.pillars.includes("growth") ? ["vendor-scout"] : []),
+    ...(plan.pillars.includes("sales") ? ["mint"] : []),
+  ]);
+  const releasedRunIds: string[] = [];
+  const skipped: Array<{ workerId: string; reason: string }> = [];
+
+  for (const workerId of workerIds) {
+    try {
+      const run = queueOperatorRun(workerId, "manual", `plan-search:${plan.id}:${plan.researchQuery || plan.intent}`);
+      releasedRunIds.push(run.id);
+    } catch (error) {
+      skipped.push({
+        workerId,
+        reason: error instanceof Error ? error.message : "Unknown worker release failure.",
+      });
+    }
+  }
+
+  addEvent("PLAN_SEARCH_WORKERS_RELEASED", `Plan ${plan.id} released ${releasedRunIds.length} search-pressure worker run(s).`, "deterministic-engine", {
+    planId: plan.id,
+    workerIds,
+    releasedRunIds,
+    skipped,
+  });
+
+  return { releasedRunIds, skipped };
+}
+
 async function executeOperatorRun(runId: string) {
   const run = state.operatorRuns.find((entry) => entry.id === runId);
   if (!run) return;
@@ -10172,9 +10206,13 @@ async function startServer() {
         proposals: plan.proposals,
       },
     });
+    const workerRelease = releasePlanSearchWorkers(plan);
     captureMetricHistory();
     await persistState();
-    res.json(plan);
+    res.json({
+      ...plan,
+      searchPressure: workerRelease,
+    });
   });
 
   app.post("/api/runs", withPublicRateLimit("heavy_mutation"), async (req, res) => {
