@@ -1,4 +1,4 @@
-export type SurfaceId = "deterministic-engine" | "sunnyvale" | "silicon-valley" | "archives";
+export type SurfaceId = "deterministic-engine" | "sunnyvale" | "silicon-valley" | "archives" | "status";
 
 export type PlanStatus = "draft" | "review" | "approved" | "active" | "completed";
 export type RunStatus = "queued" | "executing" | "completed" | "blocked" | "failed";
@@ -269,6 +269,59 @@ export interface ControlTelemetry {
   totalSignals: number;
   lastResearchSyncAt?: string;
   metrics: TelemetryMetric[];
+}
+
+export interface StatusHistoryDay {
+  date: string;
+  status: "operational" | "degraded" | "incident";
+  incidentCount: number;
+  runCount: number;
+  archiveCount: number;
+}
+
+export interface StatusIncident {
+  id: string;
+  type: string;
+  status: "investigating" | "resolved" | "monitoring";
+  severity: "info" | "warning" | "critical";
+  title: string;
+  summary: string;
+  startedAt: string;
+  resolvedAt?: string;
+  evidenceRefs: string[];
+}
+
+export interface StatusPageSnapshot {
+  generatedAt: string;
+  service: {
+    name: string;
+    status: "operational" | "degraded" | "incident";
+    uptimeObservedSeconds: number;
+    publicUrl?: string;
+  };
+  stats: {
+    observedUptimePercent: number;
+    runSuccessRate: number;
+    archiveProofCoverage: number;
+    policyAlignment: number;
+    determinismScore: number;
+    activeRunCount: number;
+    totalRuns: number;
+    completedRuns: number;
+    incidentCount14d: number;
+    evidenceExports: number;
+    providerReadyCount: number;
+    providerConfiguredCount: number;
+    redisBackedEventStream: boolean;
+  };
+  components: Array<{
+    id: string;
+    name: string;
+    status: "operational" | "degraded" | "incident";
+    detail: string;
+  }>;
+  history: StatusHistoryDay[];
+  incidents: StatusIncident[];
 }
 
 export interface BootstrapPayload {

@@ -53,6 +53,7 @@ import type {
   RiskTier,
   RunStageRecord,
   SkillArtifact,
+  StatusPageSnapshot,
   SunnyvaleInternalSnapshot,
   SunnyvaleOverview,
   SurfaceId,
@@ -376,6 +377,7 @@ const surfaces: BootstrapPayload["surfaces"] = [
   { id: "sunnyvale", name: "Sunnyvale", purpose: "Execution floor for approvals, runs, workers, and workflows." },
   { id: "silicon-valley", name: "Silicon Valley", purpose: "Founder control console for governance, risk, and source health." },
   { id: "archives", name: "Archives", purpose: "Replayable evidence, compiled artifacts, and ordered event memory." },
+  { id: "status", name: "Status", purpose: "Observed uptime, incident history, and proof-backed operational metrics." },
 ];
 
 const defaultGovernanceRegistry: GovernanceRegistry = {
@@ -9473,6 +9475,126 @@ function buildRunProof(runId: string) {
   };
 }
 
+function buildStatusPageSnapshot(providerSnapshot: ModelProviderSnapshot): StatusPageSnapshot {
+  const telemetry = buildTelemetry();
+  const terminalRuns = state.runs.filter((run) => ["completed", "blocked", "failed"].includes(run.status));
+  const completedRuns = state.runs.filter((run) => run.status === "completed");
+  const failedOrBlockedRuns = state.runs.filter((run) => run.status === "failed" || run.status === "blocked");
+  const archiveProofCoverage = state.runs.length === 0
+    ? 1
+    : completedRuns.filter((run) => run.artifact && run.artifact.archiveRecordIds.length > 0).length / Math.max(1, completedRuns.length || state.runs.length);
+  const runSuccessRate = terminalRuns.length === 0 ? 1 : completedRuns.length / terminalRuns.length;
+  const criticalEvents = state.events.filter((event) => /FAILED|BLOCKED|CRITICAL|ERROR|UNAVAILABLE|ESCALATED/.test(event.type));
+  const recentCriticalEvents = criticalEvents.filter((event) => Date.now() - new Date(event.timestamp).getTime() <= 14 * 24 * 60 * 60 * 1000);
+  const providerReadyCount = providerSnapshot.statuses.filter((status) => status.health === "ready").length;
+  const providerConfiguredCount = providerSnapshot.statuses.filter((status) => status.configured).length;
+  const serviceStatus: StatusPageSnapshot["service"]["status"] = failedOrBlockedRuns.some((run) => !run.completedAt || Date.now() - new Date(run.completedAt).getTime() < 60 * 60 * 1000)
+    ? "incident"
+    : recentCriticalEvents.length > 0 || providerReadyCount === 0 || storageRuntime.connected === false
+      ? "degraded"
+      : "operational";
+
+  const history = Array.from({ length: 14 }, (_, index) => {
+    const day = new Date(Date.now() - (13 - index) * 24 * 60 * 60 * 1000);
+    const date = day.toISOString().slice(0, 10);
+    const dayEvents = criticalEvents.filter((event) => event.timestamp.slice(0, 10) === date);
+    const dayRuns = state.runs.filter((run) => run.startedAt.slice(0, 10) === date);
+    const dayArchives = state.archives.filter((archive) => archive.createdAt.slice(0, 10) === date);
+    const status: "operational" | "degraded" | "incident" = dayEvents.some((event) => /FAILED|CRITICAL|ERROR/.test(event.type))
+      ? "incident"
+      : dayEvents.length > 0
+        ? "degraded"
+        : "operational";
+    return {
+      date,
+      status,
+      incidentCount: dayEvents.length,
+      runCount: dayRuns.length,
+      archiveCount: dayArchives.length,
+    };
+  });
+
+  const incidents = recentCriticalEvents.slice(0, 20).map((event) => ({
+    id: event.id,
+    type: event.type,
+    status: event.type.includes("FAILED") || event.type.includes("BLOCKED") ? "resolved" as const : "monitoring" as const,
+    severity: /FAILED|CRITICAL|ERROR/.test(event.type) ? "critical" as const : "warning" as const,
+    title: event.type.replace(/_/g, " "),
+    summary: event.message,
+    startedAt: event.timestamp,
+    resolvedAt: event.type.includes("FAILED") || event.type.includes("BLOCKED") ? event.timestamp : undefined,
+    evidenceRefs: [
+      ...(typeof event.metadata?.runId === "string" ? [event.metadata.runId] : []),
+      ...(typeof event.metadata?.planId === "string" ? [event.metadata.planId] : []),
+    ],
+  }));
+
+  return {
+    generatedAt: now(),
+    service: {
+      name: "Veklom UACP Control Plane",
+      status: serviceStatus,
+      uptimeObservedSeconds: Math.floor((Date.now() - CONTROL_PLANE_BOOTED_AT) / 1000),
+      publicUrl: UACP_PUBLIC_BASE_URL || undefined,
+    },
+    stats: {
+      observedUptimePercent: history.length === 0 ? 100 : Number(((history.filter((day) => day.status !== "incident").length / history.length) * 100).toFixed(2)),
+      runSuccessRate: Number((runSuccessRate * 100).toFixed(2)),
+      archiveProofCoverage: Number((archiveProofCoverage * 100).toFixed(2)),
+      policyAlignment: Number((telemetry.policyAlignment * 100).toFixed(2)),
+      determinismScore: Number((telemetry.determinismScore * 100).toFixed(2)),
+      activeRunCount: state.runs.filter((run) => run.status === "queued" || run.status === "executing").length,
+      totalRuns: state.runs.length,
+      completedRuns: completedRuns.length,
+      incidentCount14d: recentCriticalEvents.length,
+      evidenceExports: state.backendSummary.evidenceExports,
+      providerReadyCount,
+      providerConfiguredCount,
+      redisBackedEventStream: eventStreamRedisBacked(),
+    },
+    components: [
+      {
+        id: "control-plane",
+        name: "Control Plane API",
+        status: serviceStatus === "incident" ? "incident" : "operational",
+        detail: `HTTP server bound to 0.0.0.0:${PORT}.`,
+      },
+      {
+        id: "event-stream",
+        name: "Realtime Event Stream",
+        status: eventStreamRedisBacked() ? "operational" : "degraded",
+        detail: eventStreamRedisBacked() ? "Redis-backed stream frames are enabled." : "SSE is live; Redis stream persistence is waiting for Upstash Redis env.",
+      },
+      {
+        id: "proof-archive",
+        name: "Proof Archive",
+        status: archiveProofCoverage >= 0.95 ? "operational" : archiveProofCoverage > 0 ? "degraded" : "incident",
+        detail: `${Math.round(archiveProofCoverage * 100)}% of completed runs have archive-backed artifacts.`,
+      },
+      {
+        id: "model-routing",
+        name: "Model Routing",
+        status: providerReadyCount > 0 ? "operational" : "degraded",
+        detail: `${providerReadyCount}/${providerSnapshot.statuses.length} providers ready.`,
+      },
+      {
+        id: "storage",
+        name: "State Storage",
+        status: storageRuntime.connected || storageRuntime.provider === "file" ? "operational" : "degraded",
+        detail: `${storageRuntime.provider} mode: ${storageRuntime.mode}.`,
+      },
+      {
+        id: "research-ingest",
+        name: "Research Ingest",
+        status: state.researchStatus.some((source) => source.status === "online") ? "operational" : "degraded",
+        detail: `${state.researchSignals.length} research signals currently retained.`,
+      },
+    ],
+    history,
+    incidents,
+  };
+}
+
 async function advanceRunStage(
   run: GovernedRun,
   plan: InstitutionalPlan,
@@ -10053,6 +10175,9 @@ async function startServer() {
     res.setHeader("Content-Type", "application/json");
     res.setHeader("Content-Disposition", `attachment; filename="${proof.run.id}-veklom-run-proof.json"`);
     res.send(JSON.stringify(proof, null, 2));
+  });
+  app.get("/api/status-page", async (_req, res) => {
+    res.json(buildStatusPageSnapshot(await getProviderSnapshot(false)));
   });
   app.get("/api/telemetry", (_req, res) => res.json(buildTelemetry()));
   app.get("/api/observability/signals", (_req, res) => res.json(buildEngineObservability()));

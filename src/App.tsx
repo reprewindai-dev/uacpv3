@@ -44,6 +44,7 @@ import type {
   ResearchSignal,
   ResearchSourceStatus,
   SkillArtifact,
+  StatusPageSnapshot,
   SunnyvaleInternalSnapshot,
   SurfaceId,
   WorkerRuntimeState,
@@ -74,6 +75,7 @@ type DataState = {
   telemetry: ControlTelemetry | null;
   observability: EngineObservability | null;
   providerSnapshot: ModelProviderSnapshot | null;
+  statusPage: StatusPageSnapshot | null;
 };
 
 const initialState: DataState = {
@@ -100,6 +102,7 @@ const initialState: DataState = {
   telemetry: null,
   observability: null,
   providerSnapshot: null,
+  statusPage: null,
 };
 
 const surfaceLabels: Record<SurfaceId, string> = {
@@ -107,6 +110,7 @@ const surfaceLabels: Record<SurfaceId, string> = {
   sunnyvale: "Sunnyvale",
   "silicon-valley": "Silicon Valley",
   archives: "Archives",
+  status: "Status",
 };
 
 export default function App() {
@@ -139,8 +143,9 @@ export default function App() {
         fetchJson<CommandCenterSnapshot>("/api/command-center"),
         fetchJson<SunnyvaleInternalSnapshot>("/api/sunnyvale-internal"),
         fetchJson<ModelProviderSnapshot>("/api/provider-readiness"),
+        fetchJson<StatusPageSnapshot>("/api/status-page"),
       ])
-        .then(([telemetry, observability, workerRuntime, operatorRuns, backendSummary, backendEvents, commandCenter, sunnyvaleInternal, providerSnapshot]) =>
+        .then(([telemetry, observability, workerRuntime, operatorRuns, backendSummary, backendEvents, commandCenter, sunnyvaleInternal, providerSnapshot, statusPage]) =>
           setState((current) => ({
             ...current,
             telemetry,
@@ -152,6 +157,7 @@ export default function App() {
             commandCenter,
             sunnyvaleInternal,
             providerSnapshot,
+            statusPage,
           })),
         )
         .catch(() => {});
@@ -207,6 +213,7 @@ export default function App() {
       engineSignals,
       telemetry,
       observability,
+      statusPage,
     ] = await Promise.all([
       fetchJson<BootstrapPayload>("/api/bootstrap"),
       fetchJson<Pillar[]>("/api/pillars"),
@@ -231,6 +238,7 @@ export default function App() {
       fetchJson<EngineSignal[]>("/api/ssrn-signals"),
       fetchJson<ControlTelemetry>("/api/telemetry"),
       fetchJson<EngineObservability>("/api/observability/signals"),
+      fetchJson<StatusPageSnapshot>("/api/status-page"),
     ]);
 
     setState({
@@ -257,6 +265,7 @@ export default function App() {
       engineSignals,
       telemetry,
       observability,
+      statusPage,
     });
 
     if (!selectedPlanId && plans[0]) {
@@ -526,6 +535,10 @@ export default function App() {
                 latestRun={latestRun}
                 eventStreamStatus={eventStreamStatus}
               />
+            )}
+
+            {activeSurface === "status" && (
+              <StatusSurface statusPage={state.statusPage} />
             )}
           </div>
         )}
@@ -1572,6 +1585,131 @@ function ArchivesSurface({
         </Panel>
       </section>
     </>
+  );
+}
+
+function StatusSurface({ statusPage }: { statusPage: StatusPageSnapshot | null }) {
+  if (!statusPage) {
+    return (
+      <section className="col-span-12 h-full min-h-0 overflow-y-auto custom-scrollbar glass-panel border border-white/5 p-6">
+        <div className="text-sm text-white/45 italic">Loading observed status...</div>
+      </section>
+    );
+  }
+
+  const statusTone = statusPage.service.status === "operational"
+    ? "text-green-300 border-green-400/30 bg-green-500/10"
+    : statusPage.service.status === "degraded"
+      ? "text-amber-300 border-amber-400/30 bg-amber-500/10"
+      : "text-rose-300 border-rose-400/30 bg-rose-500/10";
+
+  return (
+    <>
+      <section className="col-span-8 h-full min-h-0 overflow-y-auto custom-scrollbar glass-panel border border-white/5">
+        <div className="p-6 border-b border-white/5 bg-gradient-to-b from-white/[0.02] to-transparent">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h2 className="font-serif italic text-3xl text-white/90">Veklom Status</h2>
+              <p className="mt-1 text-[10px] uppercase tracking-[0.3em] text-white/30 font-bold">
+                Observed uptime / incident history / proof-backed stats
+              </p>
+            </div>
+            <div className={`rounded-full border px-4 py-2 text-[10px] uppercase tracking-[0.25em] ${statusTone}`}>
+              {statusPage.service.status}
+            </div>
+          </div>
+        </div>
+
+        <div className="p-6 space-y-6">
+          <div className="grid grid-cols-2 xl:grid-cols-4 gap-4">
+            <StatusStat label="Observed uptime" value={`${statusPage.stats.observedUptimePercent}%`} />
+            <StatusStat label="Run success" value={`${statusPage.stats.runSuccessRate}%`} />
+            <StatusStat label="Archive proof" value={`${statusPage.stats.archiveProofCoverage}%`} />
+            <StatusStat label="Provider routes" value={`${statusPage.stats.providerReadyCount}/${statusPage.stats.providerConfiguredCount}`} />
+            <StatusStat label="Policy alignment" value={`${statusPage.stats.policyAlignment}%`} />
+            <StatusStat label="Determinism" value={`${statusPage.stats.determinismScore}%`} />
+            <StatusStat label="Evidence exports" value={String(statusPage.stats.evidenceExports)} />
+            <StatusStat label="Redis stream" value={statusPage.stats.redisBackedEventStream ? "true" : "false"} />
+          </div>
+
+          <Panel title="Uptime history" icon={<Activity size={14} className="text-blue-400" />}>
+            <div className="grid grid-cols-7 lg:grid-cols-14 gap-2">
+              {statusPage.history.map((day) => (
+                <div key={day.date} className="space-y-2">
+                  <div
+                    title={`${day.date}: ${day.status}, ${day.runCount} runs, ${day.archiveCount} archives`}
+                    className={`h-16 rounded-lg border ${
+                      day.status === "operational"
+                        ? "border-green-400/20 bg-green-500/20"
+                        : day.status === "degraded"
+                          ? "border-amber-400/20 bg-amber-500/20"
+                          : "border-rose-400/20 bg-rose-500/20"
+                    }`}
+                  />
+                  <div className="text-[8px] text-white/30 font-mono">{day.date.slice(5)}</div>
+                </div>
+              ))}
+            </div>
+          </Panel>
+
+          <Panel title="Component health" icon={<ShieldCheck size={14} className="text-blue-400" />} contentClassName="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {statusPage.components.map((component) => (
+              <div key={component.id} className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-white">{component.name}</div>
+                  <div className={`text-[9px] uppercase tracking-[0.2em] ${
+                    component.status === "operational" ? "text-green-300" : component.status === "degraded" ? "text-amber-300" : "text-rose-300"
+                  }`}>
+                    {component.status}
+                  </div>
+                </div>
+                <p className="mt-2 text-sm text-white/50">{component.detail}</p>
+              </div>
+            ))}
+          </Panel>
+        </div>
+      </section>
+
+      <section className="col-span-4 h-full min-h-0 overflow-y-auto custom-scrollbar flex flex-col gap-4">
+        <Panel title="Incident history" icon={<Radar size={14} className="text-blue-400" />}>
+          <div className="space-y-3">
+            {statusPage.incidents.length === 0 ? (
+              <div className="text-sm text-white/45 italic">No observed incidents in the last 14 days.</div>
+            ) : statusPage.incidents.map((incident) => (
+              <div key={incident.id} className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-white text-sm">{incident.title}</div>
+                  <div className={`text-[9px] uppercase tracking-[0.2em] ${incident.severity === "critical" ? "text-rose-300" : "text-amber-300"}`}>
+                    {incident.status}
+                  </div>
+                </div>
+                <p className="mt-2 text-xs text-white/50">{incident.summary}</p>
+                <div className="mt-3 text-[10px] uppercase tracking-[0.2em] text-blue-300">
+                  {new Date(incident.startedAt).toLocaleString()}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Panel>
+
+        <Panel title="Public proof posture" icon={<LibraryBig size={14} className="text-blue-400" />}>
+          <div className="space-y-3 text-sm text-white/55">
+            <p>Stats are computed from current runtime events, governed runs, archives, provider readiness, and Redis stream state.</p>
+            <p>No inflated uptime claim is made beyond observed runtime history.</p>
+            <p className="text-[10px] uppercase tracking-[0.25em] text-white/25">Generated {new Date(statusPage.generatedAt).toLocaleString()}</p>
+          </div>
+        </Panel>
+      </section>
+    </>
+  );
+}
+
+function StatusStat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+      <div className="text-[9px] uppercase tracking-[0.22em] text-white/30">{label}</div>
+      <div className="mt-2 text-2xl font-serif italic text-white">{value}</div>
+    </div>
   );
 }
 
