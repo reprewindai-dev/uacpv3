@@ -8,3 +8,4 @@ coverage/
 .env*
 !.env.example
 data/control-plane-state.json
+data/cold-store/

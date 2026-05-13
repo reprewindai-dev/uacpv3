@@ -2034,6 +2034,7 @@ function normalizeWorkerRuntimeForStartup() {
 }
 
 const clients = new Set<WebSocket>();
+const eventStreamClients = new Set<express.Response>();
 let state: RuntimeState = emptyState();
 let persistQueue = Promise.resolve();
 let governanceRegistry: GovernanceRegistry = cloneRegistry(defaultGovernanceRegistry);
@@ -4126,6 +4127,36 @@ function addArchive(entry: Omit<ArchiveEntry, "id" | "createdAt">) {
   return archive;
 }
 
+function eventStreamRedisBacked() {
+  return Boolean(rateLimitRuntime.redis);
+}
+
+function buildEventStreamEnvelope(payload: unknown) {
+  return {
+    id: createId("stream"),
+    emittedAt: now(),
+    redis_backed: eventStreamRedisBacked(),
+    channel: "uacp:event-stream",
+    payload,
+  };
+}
+
+function sendEventStreamFrame(res: express.Response, envelope: ReturnType<typeof buildEventStreamEnvelope>) {
+  res.write(`id: ${envelope.id}\n`);
+  res.write(`event: uacp_frame\n`);
+  res.write(`data: ${JSON.stringify(envelope)}\n\n`);
+}
+
+async function persistEventStreamFrame(envelope: ReturnType<typeof buildEventStreamEnvelope>) {
+  if (!rateLimitRuntime.redis) return;
+  try {
+    await rateLimitRuntime.redis.lpush("uacp:v5:event-stream", JSON.stringify(envelope));
+    await rateLimitRuntime.redis.ltrim("uacp:v5:event-stream", 0, 499);
+  } catch (error) {
+    console.error("[uacp] event stream redis write failed:", error instanceof Error ? error.message : error);
+  }
+}
+
 function broadcast(payload: unknown) {
   const serialized = JSON.stringify(payload);
   for (const client of clients) {
@@ -4133,6 +4164,12 @@ function broadcast(payload: unknown) {
       client.send(serialized);
     }
   }
+
+  const envelope = buildEventStreamEnvelope(payload);
+  for (const client of eventStreamClients) {
+    sendEventStreamFrame(client, envelope);
+  }
+  void persistEventStreamFrame(envelope);
 }
 
 function upsertWorkerRuntime(nextRuntime: WorkerRuntimeState) {
@@ -9365,6 +9402,77 @@ function createArtifact(
   };
 }
 
+function buildRunProof(runId: string) {
+  const run = state.runs.find((entry) => entry.id === runId);
+  if (!run) return null;
+
+  const plan = state.plans.find((entry) => entry.id === run.planId) || null;
+  const runEvents = state.events.filter((event) => event.metadata?.runId === run.id || event.metadata?.planId === run.planId);
+  const runArchives = state.archives.filter((archive) => archive.lineage.includes(run.id) || archive.lineage.includes(run.planId));
+  const artifact = run.artifact || null;
+  const archiveRecordIds = artifact?.archiveRecordIds || runArchives.map((archive) => archive.id);
+
+  const inputFrame = {
+    planId: run.planId,
+    planIntent: plan?.intent || null,
+    planTitle: plan?.title || null,
+    graph: plan?.graph || null,
+    committeeIds: plan?.committeeIds || [],
+    workflowIds: plan?.workflowIds || [],
+    skillIds: plan?.skillIds || [],
+  };
+  const outputFrame = {
+    runOutput: run.output || null,
+    artifact,
+    archiveRecordIds,
+  };
+  const genomeFrame = {
+    pillarIds: plan?.pillars || [],
+    committeeIds: plan?.committeeIds || [],
+    workflowIds: plan?.workflowIds || [],
+    skillIds: plan?.skillIds || [],
+    escalationRuleIds: plan?.escalationRuleIds || [],
+    graph: plan?.graph || null,
+  };
+  const decisionFrame = {
+    runId: run.id,
+    status: run.status,
+    currentStage: run.currentStage,
+    approvals: run.approvals,
+    evidenceCount: run.evidenceCount,
+    stages: run.stages || [],
+    eventHashes: runEvents.map((event) => event.recordHash).filter(Boolean),
+    archiveHashes: runArchives.map((archive) => archive.recordHash).filter(Boolean),
+  };
+
+  return {
+    proofId: createId("proof"),
+    generatedAt: now(),
+    runtime: {
+      system: TOOL_NAME,
+      version: "v5-proof",
+      stream: {
+        route: "/api/v1/internal/uacp/event-stream",
+        redis_backed: eventStreamRedisBacked(),
+      },
+    },
+    run,
+    plan,
+    artifact,
+    archives: runArchives,
+    events: runEvents,
+    hashes: {
+      inputHash: sha256Hex(inputFrame),
+      outputHash: sha256Hex(outputFrame),
+      genomeHash: sha256Hex(genomeFrame),
+      decisionFrameHash: sha256Hex(decisionFrame),
+      artifactHash: artifact ? sha256Hex(artifact) : null,
+      runHash: sha256Hex(run),
+      planHash: plan ? sha256Hex(plan) : null,
+    },
+  };
+}
+
 async function advanceRunStage(
   run: GovernedRun,
   plan: InstitutionalPlan,
@@ -9806,6 +9914,36 @@ async function startServer() {
     }
   });
   app.get("/api/ssrn-signals", (_req, res) => res.json(toEngineSignals(state.researchSignals)));
+  app.get("/api/v1/internal/uacp/event-stream", (req, res) => {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+
+    const initEnvelope = buildEventStreamEnvelope({
+      type: "stream_init",
+      data: {
+        redis_backed: eventStreamRedisBacked(),
+        recentEvents: state.events.slice(0, 20),
+        recentRuns: state.runs.slice(0, 10),
+        recentArchives: state.archives.slice(0, 10),
+      },
+    });
+    sendEventStreamFrame(res, initEnvelope);
+    eventStreamClients.add(res);
+
+    const heartbeat = setInterval(() => {
+      sendEventStreamFrame(res, buildEventStreamEnvelope({ type: "heartbeat", data: { at: now() } }));
+    }, 25000);
+
+    req.on("close", () => {
+      clearInterval(heartbeat);
+      eventStreamClients.delete(res);
+      res.end();
+    });
+  });
   app.get("/api/plans", (_req, res) => res.json(state.plans));
   app.get("/api/runs", (_req, res) => res.json(state.runs));
   app.get("/api/events", (_req, res) => res.json(state.events));
@@ -9897,6 +10035,24 @@ async function startServer() {
     } catch (error) {
       res.status(404).json({ error: error instanceof Error ? error.message : "Inspection view unavailable." });
     }
+  });
+  app.get("/api/runs/:runId/proof", (req, res) => {
+    const proof = buildRunProof(String(req.params.runId || ""));
+    if (!proof) {
+      res.status(404).json({ error: "Run proof not found." });
+      return;
+    }
+    res.json(proof);
+  });
+  app.get("/api/runs/:runId/proof/export", (req, res) => {
+    const proof = buildRunProof(String(req.params.runId || ""));
+    if (!proof) {
+      res.status(404).json({ error: "Run proof not found." });
+      return;
+    }
+    res.setHeader("Content-Type", "application/json");
+    res.setHeader("Content-Disposition", `attachment; filename="${proof.run.id}-veklom-run-proof.json"`);
+    res.send(JSON.stringify(proof, null, 2));
   });
   app.get("/api/telemetry", (_req, res) => res.json(buildTelemetry()));
   app.get("/api/observability/signals", (_req, res) => res.json(buildEngineObservability()));

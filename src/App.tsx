@@ -8,10 +8,12 @@ import {
   Building2,
   CheckCircle2,
   ChevronRight,
+  Database,
   Disc,
   Gavel,
   Layers,
   LibraryBig,
+  LoaderCircle,
   Network,
   Radar,
   ShieldCheck,
@@ -113,7 +115,15 @@ export default function App() {
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null);
   const [intent, setIntent] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [launchingPlanId, setLaunchingPlanId] = useState<string | null>(null);
+  const [launchRunError, setLaunchRunError] = useState<string | null>(null);
+  const [eventStreamStatus, setEventStreamStatus] = useState({
+    connected: false,
+    redisBacked: false,
+    route: "/api/v1/internal/uacp/event-stream",
+  });
   const socketRef = useRef<WebSocket | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
     void loadAll();
@@ -147,11 +157,13 @@ export default function App() {
         .catch(() => {});
     }, 4000);
 
+    connectEventStream();
     connectSocket();
 
     return () => {
       clearInterval(interval);
       socketRef.current?.close();
+      eventSourceRef.current?.close();
     };
   }, []);
 
@@ -257,53 +269,86 @@ export default function App() {
     const socket = new WebSocket(`${protocol}//${window.location.host}`);
     socketRef.current = socket;
 
-    socket.onmessage = (event) => {
-      const payload = JSON.parse(event.data);
-
-      if (payload.type === "event") {
-        setState((current) => ({
-          ...current,
-          events: current.events.some((item) => item.id === payload.data.id)
-            ? current.events
-            : [payload.data, ...current.events].slice(0, 120),
-        }));
-      }
-
-      if (payload.type === "archive") {
-        setState((current) => ({
-          ...current,
-          archives: current.archives.some((item) => item.id === payload.data.id)
-            ? current.archives
-            : [payload.data, ...current.archives].slice(0, 80),
-        }));
-      }
-
-      if (payload.type === "run_update") {
-        setState((current) => ({
-          ...current,
-          runs: upsertById(current.runs, payload.data),
-        }));
-      }
-
-      if (payload.type === "operator_run_update") {
-        setState((current) => ({
-          ...current,
-          operatorRuns: upsertById(current.operatorRuns, payload.data),
-        }));
-      }
-
-      if (payload.type === "backend_event") {
-        setState((current) => ({
-          ...current,
-          backendEvents: current.backendEvents.some((item) => item.eventId === payload.data.eventId)
-            ? current.backendEvents
-            : [payload.data, ...current.backendEvents].slice(0, 200),
-        }));
-      }
-    };
+    socket.onmessage = (event) => applyRealtimePayload(JSON.parse(event.data));
 
     socket.onclose = () => {
       setTimeout(connectSocket, 2500);
+    };
+  }
+
+  function applyRealtimePayload(payload: any) {
+    if (payload.type === "event") {
+      setState((current) => ({
+        ...current,
+        events: current.events.some((item) => item.id === payload.data.id)
+          ? current.events
+          : [payload.data, ...current.events].slice(0, 120),
+      }));
+    }
+
+    if (payload.type === "archive") {
+      setState((current) => ({
+        ...current,
+        archives: current.archives.some((item) => item.id === payload.data.id)
+          ? current.archives
+          : [payload.data, ...current.archives].slice(0, 80),
+      }));
+    }
+
+    if (payload.type === "run_update") {
+      setState((current) => ({
+        ...current,
+        runs: upsertById(current.runs, payload.data),
+      }));
+    }
+
+    if (payload.type === "operator_run_update") {
+      setState((current) => ({
+        ...current,
+        operatorRuns: upsertById(current.operatorRuns, payload.data),
+      }));
+    }
+
+    if (payload.type === "backend_event") {
+      setState((current) => ({
+        ...current,
+        backendEvents: current.backendEvents.some((item) => item.eventId === payload.data.eventId)
+          ? current.backendEvents
+          : [payload.data, ...current.backendEvents].slice(0, 200),
+      }));
+    }
+  }
+
+  function connectEventStream() {
+    const source = new EventSource("/api/v1/internal/uacp/event-stream");
+    eventSourceRef.current = source;
+
+    source.addEventListener("uacp_frame", (event) => {
+      const envelope = JSON.parse((event as MessageEvent).data);
+      setEventStreamStatus({
+        connected: true,
+        redisBacked: Boolean(envelope.redis_backed),
+        route: "/api/v1/internal/uacp/event-stream",
+      });
+
+      if (envelope.payload?.type === "stream_init") {
+        const data = envelope.payload.data || {};
+        setState((current) => ({
+          ...current,
+          events: Array.isArray(data.recentEvents) ? data.recentEvents : current.events,
+          runs: Array.isArray(data.recentRuns) ? data.recentRuns : current.runs,
+          archives: Array.isArray(data.recentArchives) ? data.recentArchives : current.archives,
+        }));
+        return;
+      }
+
+      if (envelope.payload?.type !== "heartbeat") {
+        applyRealtimePayload(envelope.payload);
+      }
+    });
+
+    source.onerror = () => {
+      setEventStreamStatus((current) => ({ ...current, connected: false }));
     };
   }
 
@@ -330,16 +375,27 @@ export default function App() {
   }
 
   async function launchRun(planId: string) {
-    const run = await fetchJson<GovernedRun>("/api/runs", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ planId }),
-    });
+    if (launchingPlanId === planId) return;
 
-    setState((current) => ({
-      ...current,
-      runs: [run, ...current.runs.filter((entry) => entry.id !== run.id)],
-    }));
+    setLaunchingPlanId(planId);
+    setLaunchRunError(null);
+
+    try {
+      const run = await fetchJson<GovernedRun>("/api/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ planId }),
+      });
+
+      setState((current) => ({
+        ...current,
+        runs: [run, ...current.runs.filter((entry) => entry.id !== run.id)],
+      }));
+    } catch (error) {
+      setLaunchRunError(error instanceof Error ? error.message : "Unable to launch governed run.");
+    } finally {
+      setLaunchingPlanId(null);
+    }
   }
 
   function routeToSunnyvale(planId: string) {
@@ -437,6 +493,8 @@ export default function App() {
                 committees={state.committees}
                 workers={state.workers}
                 sunnyvaleInternal={state.sunnyvaleInternal}
+                launchingPlanId={launchingPlanId}
+                launchRunError={launchRunError}
                 onSelectPlan={(planId) => setSelectedPlanId(planId)}
                 onLaunchRun={launchRun}
               />
@@ -462,7 +520,12 @@ export default function App() {
             )}
 
             {activeSurface === "archives" && (
-              <ArchivesSurface archives={state.archives} events={state.events} latestRun={latestRun} />
+              <ArchivesSurface
+                archives={state.archives}
+                events={state.events}
+                latestRun={latestRun}
+                eventStreamStatus={eventStreamStatus}
+              />
             )}
           </div>
         )}
@@ -479,6 +542,8 @@ function SunnyvaleSurface({
   committees,
   workers,
   sunnyvaleInternal,
+  launchingPlanId,
+  launchRunError,
   onSelectPlan,
   onLaunchRun,
 }: {
@@ -489,6 +554,8 @@ function SunnyvaleSurface({
   committees: Committee[];
   workers: OperatorWorker[];
   sunnyvaleInternal: SunnyvaleInternalSnapshot | null;
+  launchingPlanId: string | null;
+  launchRunError: string | null;
   onSelectPlan: (planId: string) => void;
   onLaunchRun: (planId: string) => Promise<void>;
 }) {
@@ -507,6 +574,9 @@ function SunnyvaleSurface({
   const dataMode = sunnyvaleInternal?.mode || "waiting";
   const bridgeStatus = sunnyvaleInternal?.bridgeStatus;
   const usingBackendTruth = sunnyvaleInternal?.source === "backend-truth";
+  const bridgeOverviewMessage = describeSunnyvaleBridgeState("overview", bridgeStatus);
+  const evaluationFallbackMessage = describeSunnyvaleBridgeState("evaluation", bridgeStatus);
+  const growthFallbackMessage = describeSunnyvaleBridgeState("growth", bridgeStatus);
   const modeLabel = usingBackendTruth
     ? "live backend"
     : dataMode === "research-only"
@@ -516,7 +586,7 @@ function SunnyvaleSurface({
 
   return (
     <>
-      <section className="col-span-8 h-full min-h-0 overflow-hidden glass-panel border border-white/5">
+      <section className="col-span-8 h-full min-h-0 overflow-hidden glass-panel border border-white/5 flex flex-col">
         <div className="p-6 border-b border-white/5 bg-gradient-to-b from-white/[0.02] to-transparent">
           <div className="flex items-center justify-between gap-4">
             <div>
@@ -554,7 +624,7 @@ function SunnyvaleSurface({
           </div>
         </div>
 
-        <div className="h-[calc(100%-109px)] overflow-y-auto custom-scrollbar p-6 space-y-6">
+        <div className="flex-1 min-h-0 overflow-y-auto custom-scrollbar p-6 space-y-6">
           {activeRoom === "overview" && (
             <>
               <Panel title="UACP business pulse" icon={<Radar size={14} className="text-blue-400" />}>
@@ -604,13 +674,11 @@ function SunnyvaleSurface({
                     </div>
 
                     <div className="text-xs text-white/45">
-                      {!usingBackendTruth && bridgeStatus && !bridgeStatus.baseUrlConfigured
-                        ? "Sunnyvale is running in local fallback because the backend bridge URL is not configured on this runtime."
-                        : !usingBackendTruth && bridgeStatus && bridgeStatus.lastError
-                          ? `Sunnyvale backend bridge degraded: ${bridgeStatus.lastError}`
-                          : sunnyvaleInternal.overview.lastBackendEventAt
-                        ? `Last backend truth arrived ${new Date(sunnyvaleInternal.overview.lastBackendEventAt).toLocaleString()}.`
-                        : "Sunnyvale is waiting for normalized backend truth before it can rank real evaluation accounts."}
+                      {!usingBackendTruth && bridgeOverviewMessage
+                        ? bridgeOverviewMessage
+                        : sunnyvaleInternal.overview.lastBackendEventAt
+                          ? `Last backend truth arrived ${new Date(sunnyvaleInternal.overview.lastBackendEventAt).toLocaleString()}.`
+                          : "Sunnyvale is waiting for normalized backend truth before it can rank real evaluation accounts."}
                     </div>
                   </div>
                 ) : (
@@ -654,8 +722,8 @@ function SunnyvaleSurface({
                       icon={<Users size={40} />}
                       title="No live evaluation queue yet"
                       body={
-                        !usingBackendTruth && bridgeStatus && !bridgeStatus.baseUrlConfigured
-                          ? "Sunnyvale is still on local fallback. Configure UACP_BACKEND_BASE_URL on the runtime so Evaluation Surgeon can pull the protected backend queue."
+                        !usingBackendTruth
+                          ? evaluationFallbackMessage
                           : "Sunnyvale will rank workspaces here once the backend starts sending evaluation, billing, endpoint, evidence, and security events into UACP."
                       }
                     />
@@ -689,8 +757,8 @@ function SunnyvaleSurface({
                       icon={<ArrowUpRight size={40} />}
                       title="No qualified growth opportunities yet"
                       body={
-                        !usingBackendTruth && bridgeStatus && !bridgeStatus.baseUrlConfigured
-                          ? "Sunnyvale is still on local fallback. Configure UACP_BACKEND_BASE_URL on the runtime so Hub Growth Navigator can pull the protected backend opportunity queue."
+                        !usingBackendTruth
+                          ? growthFallbackMessage
                           : "Growth Navigator will populate when backend marketplace or integration events land, or when live research finds a concrete build path worth routing."
                       }
                     />
@@ -786,8 +854,8 @@ function SunnyvaleSurface({
                   icon={<Users size={44} />}
                   title="Evaluation Surgeon is waiting for backend truth"
                   body={
-                    !usingBackendTruth && bridgeStatus && !bridgeStatus.baseUrlConfigured
-                      ? "This runtime does not have UACP_BACKEND_BASE_URL configured, so the protected Evaluation Surgeon queue cannot be pulled yet."
+                    !usingBackendTruth
+                      ? evaluationFallbackMessage
                       : "Send real workspace, evaluation, endpoint, evidence, billing, and security events into `/api/v1/internal/backend/events` and UACP will rank them here."
                   }
                 />
@@ -842,8 +910,8 @@ function SunnyvaleSurface({
                   icon={<ArrowUpRight size={44} />}
                   title="No governed growth queue yet"
                   body={
-                    !usingBackendTruth && bridgeStatus && !bridgeStatus.baseUrlConfigured
-                      ? "This runtime does not have UACP_BACKEND_BASE_URL configured, so the protected Hub Growth Navigator queue cannot be pulled yet."
+                    !usingBackendTruth
+                      ? growthFallbackMessage
                       : "Growth Navigator will populate when real marketplace, integration, buyer, vendor, or live research opportunities are available for UACP to route."
                   }
                 />
@@ -903,7 +971,7 @@ function SunnyvaleSurface({
         </div>
       </section>
 
-      <section className="col-span-4 h-full min-h-0 overflow-y-auto custom-scrollbar flex flex-col gap-4 pr-1">
+      <section className="col-span-4 h-full min-h-0 overflow-hidden grid grid-rows-[minmax(0,1.45fr)_minmax(0,1fr)_minmax(0,1fr)_minmax(0,0.9fr)] gap-4 pr-1">
         <Panel title="Governed admission queue" icon={<BrainCircuit size={14} className="text-blue-400" />}>
           {plan ? (
             <div className="space-y-4">
@@ -929,10 +997,24 @@ function SunnyvaleSurface({
 
               <button
                 onClick={() => void onLaunchRun(plan.id)}
-                className="w-full px-5 py-3 border border-white/10 text-[10px] uppercase font-bold tracking-[0.3em] hover:bg-white hover:text-black transition-all active:scale-95"
+                disabled={launchingPlanId === plan.id}
+                aria-busy={launchingPlanId === plan.id}
+                className={`w-full px-5 py-3 border text-[10px] uppercase font-bold tracking-[0.3em] transition-all ${
+                  launchingPlanId === plan.id
+                    ? "border-blue-400/30 bg-blue-500/10 text-blue-100 cursor-wait"
+                    : "border-white/10 hover:bg-white hover:text-black active:scale-95"
+                }`}
               >
-                Approve & Launch Run
+                {launchingPlanId === plan.id ? (
+                  <span className="inline-flex items-center justify-center gap-2">
+                    <LoaderCircle size={14} className="animate-spin" />
+                    Launching Governed Run
+                  </span>
+                ) : (
+                  "Approve & Launch Run"
+                )}
               </button>
+              {launchRunError && <div className="text-xs text-red-300/80">{launchRunError}</div>}
             </div>
           ) : (
             <div className="text-sm text-white/45 italic">Compile a plan in the Deterministic Engine first, then review and admit it here.</div>
@@ -1255,13 +1337,8 @@ function SiliconValleySurface({
         </div>
       </section>
 
-      <section className="col-span-3 h-full min-h-0 overflow-y-auto custom-scrollbar flex flex-col gap-4">
-        <Panel
-          title="Skill governance"
-          icon={<BookMarked size={14} className="text-blue-400" />}
-          className="min-h-0 max-h-[30rem]"
-          contentClassName="space-y-3"
-        >
+      <section className="col-span-3 h-full min-h-0 overflow-hidden grid grid-rows-[minmax(0,1.35fr)_minmax(0,0.9fr)_minmax(0,0.9fr)_minmax(0,0.85fr)] gap-4">
+        <Panel title="Skill governance" icon={<BookMarked size={14} className="text-blue-400" />} contentClassName="space-y-3">
             {skills.map((skill) => (
               <div key={skill.id} className="p-4 rounded-xl border border-white/10 bg-white/[0.02]">
                 <div className="flex items-center justify-between gap-3">
@@ -1292,7 +1369,7 @@ function SiliconValleySurface({
             ))}
         </Panel>
 
-        <Panel title="Backend event feed" icon={<Activity size={14} className="text-blue-400" />} className="min-h-0 max-h-[20rem]" contentClassName="space-y-3">
+        <Panel title="Backend event feed" icon={<Activity size={14} className="text-blue-400" />} contentClassName="space-y-3">
             {backendEvents.length === 0 && (
               <div className="text-sm text-white/45 italic">No backend events have been ingested into UACP yet.</div>
             )}
@@ -1312,7 +1389,7 @@ function SiliconValleySurface({
             ))}
         </Panel>
 
-        <Panel title="Research ingress" icon={<LibraryBig size={14} className="text-blue-400" />} className="min-h-0 max-h-[20rem]" contentClassName="space-y-3">
+        <Panel title="Research ingress" icon={<LibraryBig size={14} className="text-blue-400" />} contentClassName="space-y-3">
             {researchStatus.length === 0 && (
               <div className="text-sm text-white/45 italic">No source status yet. Trigger a research refresh or compile a plan.</div>
             )}
@@ -1341,7 +1418,7 @@ function SiliconValleySurface({
             ))}
         </Panel>
 
-        <Panel title="Institutional metrics" icon={<Radar size={14} className="text-blue-400" />} className="min-h-0 max-h-[20rem]" contentClassName="space-y-3">
+        <Panel title="Institutional metrics" icon={<Radar size={14} className="text-blue-400" />} contentClassName="space-y-3">
             {(telemetry?.metrics ?? []).map((metric) => (
               <div key={metric.label} className="p-4 rounded-xl border border-white/10 bg-white/[0.02]">
                 <div className="flex items-center justify-between gap-3">
@@ -1371,11 +1448,26 @@ function ArchivesSurface({
   archives,
   events,
   latestRun,
+  eventStreamStatus,
 }: {
   archives: ArchiveEntry[];
   events: EventItem[];
   latestRun?: GovernedRun;
+  eventStreamStatus: { connected: boolean; redisBacked: boolean; route: string };
 }) {
+  async function downloadRunProof(runId: string) {
+    const response = await fetch(`/api/runs/${encodeURIComponent(runId)}/proof`);
+    if (!response.ok) return;
+    const proof = await response.json();
+    const blob = new Blob([JSON.stringify(proof, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${runId}-veklom-run-proof.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <>
       <section className="col-span-7 h-full min-h-0 overflow-y-auto custom-scrollbar glass-panel border border-white/5">
@@ -1435,6 +1527,18 @@ function ArchivesSurface({
                 <MiniStat icon={<Activity size={12} />} label="Progress" value={`${latestRun.progress}%`} />
                 <MiniStat icon={<Disc size={12} />} label="Status" value={latestRun.status} />
               </div>
+              <div className="grid grid-cols-2 gap-3">
+                <MiniStat
+                  icon={<Network size={12} />}
+                  label="Event stream"
+                  value={eventStreamStatus.connected ? "live" : "reconnecting"}
+                />
+                <MiniStat
+                  icon={<Database size={12} />}
+                  label="Redis backed"
+                  value={eventStreamStatus.redisBacked ? "true" : "false"}
+                />
+              </div>
               {latestRun.output && <p className="text-sm text-white/55 italic">{latestRun.output}</p>}
               {latestRun.artifact && (
                 <div className="space-y-3 rounded-xl border border-white/10 bg-white/[0.02] p-4">
@@ -1445,6 +1549,20 @@ function ArchivesSurface({
                     <MiniStat icon={<Layers size={12} />} label="Workflows" value={String(latestRun.artifact.workflowIds.length)} />
                   </div>
                   <div className="text-xs text-white/50 italic">{latestRun.artifact.nextAction}</div>
+                  <div className="flex flex-wrap gap-2 pt-2">
+                    <button
+                      onClick={() => downloadRunProof(latestRun.id)}
+                      className="px-3 py-2 rounded-lg border border-blue-400/30 bg-blue-500/10 text-[10px] uppercase tracking-[0.25em] text-blue-200 hover:bg-blue-500/20"
+                    >
+                      Export Run Proof
+                    </button>
+                    <a
+                      href={`/api/runs/${encodeURIComponent(latestRun.id)}/proof/export`}
+                      className="px-3 py-2 rounded-lg border border-white/10 bg-white/[0.03] text-[10px] uppercase tracking-[0.25em] text-white/60 hover:text-white"
+                    >
+                      Download JSON
+                    </a>
+                  </div>
                 </div>
               )}
             </div>
@@ -1737,6 +1855,37 @@ function OperatingSignalDetail({
       </div>
     </Panel>
   );
+}
+
+function describeSunnyvaleBridgeState(
+  scope: "overview" | "evaluation" | "growth",
+  bridgeStatus: SunnyvaleInternalSnapshot["bridgeStatus"] | undefined,
+) {
+  const missingConfigReason =
+    !bridgeStatus?.baseUrlConfigured && !bridgeStatus?.internalKeyConfigured
+      ? "UACP_BACKEND_BASE_URL and UACP_INTERNAL_API_KEY are not configured on this runtime."
+      : !bridgeStatus?.baseUrlConfigured
+        ? "UACP_BACKEND_BASE_URL is not configured on this runtime."
+        : !bridgeStatus?.internalKeyConfigured
+          ? "UACP_INTERNAL_API_KEY is not configured on this runtime."
+          : null;
+
+  if (scope === "overview") {
+    if (missingConfigReason) {
+      return `Sunnyvale is running in local fallback because ${missingConfigReason}`;
+    }
+    return bridgeStatus?.lastError ? `Sunnyvale backend bridge degraded: ${bridgeStatus.lastError}` : null;
+  }
+
+  if (scope === "evaluation") {
+    return missingConfigReason
+      ? `Sunnyvale is still on local fallback because ${missingConfigReason} Configure both values on the runtime so Evaluation Surgeon can pull the protected backend queue.`
+      : "Sunnyvale will rank workspaces here once the backend starts sending evaluation, billing, endpoint, evidence, and security events into UACP.";
+  }
+
+  return missingConfigReason
+    ? `Sunnyvale is still on local fallback because ${missingConfigReason} Configure both values on the runtime so Hub Growth Navigator can pull the protected backend opportunity queue.`
+    : "Growth Navigator will populate when backend marketplace or integration events land, or when live research finds a concrete build path worth routing.";
 }
 
 function resolveWorker(id: string, workers: OperatorWorker[]) {
