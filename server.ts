@@ -8612,9 +8612,12 @@ function withPublicRateLimit(profile: RateLimitProfile): express.RequestHandler 
       if (!result.success) {
         res.status(429).json({
           error: "Rate limit exceeded.",
-          message: "Too many requests hit this governed endpoint. Please retry after the current window resets.",
+          message: `V5 governed runtime limit reached for ${profile}. This protects shared public infrastructure; authenticated owner/internal requests bypass this limiter.`,
           profile,
           tier,
+          limit: result.limit,
+          remaining: result.remaining,
+          reset: result.reset,
           identifierType: RATE_LIMIT_TRUST_ACCESS_TIER_HEADER && req.header("x-uacp-user-id") ? "user" : "ip",
           retryAfterSeconds: retryAfterSeconds ?? null,
         });
