@@ -35,13 +35,13 @@ services:
       - key: OLLAMA_API_KEY
         sync: false
       - key: UACP_MODEL_PROVIDER_ORDER
-        value: groq,ollama,huggingface
+        value: gemini,groq,huggingface
       - key: UACP_MODEL_PROVIDER
-        value: ""
+        value: gemini
       - key: UACP_ENABLE_GEMINI_PRIMARY
-        value: "false"
+        value: "true"
       - key: ALLOW_GEMINI_FALLBACK
-        value: "false"
+        value: "true"
       - key: UACP_ADMIN_KEY
         sync: false
       - key: UACP_INTERNAL_API_KEY
