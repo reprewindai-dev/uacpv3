@@ -395,57 +395,51 @@ export function DeterministicEngineSurface({
                       </div>
                       <div className="overflow-x-auto custom-scrollbar pb-6">
                         <div className="flex items-center gap-12 min-w-max px-2 py-2">
-                          {mappedNodes.map((node, index) => (
-                            <div key={node.id} className="relative">
-                              <motion.div
-                                initial={{ opacity: 0, y: 10 }}
-                                animate={{ opacity: 1, y: 0 }}
-                                transition={{ delay: index * 0.05 }}
-                                className="w-72 min-h-[260px] glass-panel p-6 relative group hover:border-blue-500/20 transition-colors"
-                              >
-                                <div className="flex justify-between items-start mb-5">
-                                  <div>
-                                    <div className="text-[9px] font-mono uppercase tracking-[0.3em] text-white/20">{node.stage}</div>
-                                    <div className="text-white text-lg mt-2">{node.title}</div>
+                          {mappedNodes.map((node, index) => {
+                            const middleIndex = Math.floor(mappedNodes.length / 2);
+                            const isMiddle = index === middleIndex;
+                            if (!isMiddle) return null;
+                            return (
+                              <div key={node.id} className="relative">
+                                <motion.div
+                                  initial={{ opacity: 0, y: 10 }}
+                                  animate={{ opacity: 1, y: 0 }}
+                                  transition={{ delay: index * 0.05 }}
+                                  className="w-72 min-h-[260px] glass-panel p-6 relative group hover:border-blue-500/20 transition-colors"
+                                >
+                                  <div className="flex justify-between items-start mb-5">
+                                    <div>
+                                      <div className="text-[9px] font-mono uppercase tracking-[0.3em] text-white/20">{node.stage}</div>
+                                      <div className="text-white text-lg mt-2">{node.title}</div>
+                                    </div>
+                                    <div className="px-2 py-1 rounded-full border border-white/10 text-[8px] font-mono uppercase tracking-widest text-blue-300">
+                                      {node.committee}
+                                    </div>
                                   </div>
-                                  <div className="px-2 py-1 rounded-full border border-white/10 text-[8px] font-mono uppercase tracking-widest text-blue-300">
-                                    {node.committee}
+
+                                  <div className="text-xs text-white/50 leading-relaxed font-light italic h-20 overflow-hidden mb-6 group-hover:text-white/80 transition-colors">
+                                    {node.description}
                                   </div>
-                                </div>
 
-                                <div className="text-xs text-white/50 leading-relaxed font-light italic h-20 overflow-hidden mb-6 group-hover:text-white/80 transition-colors">
-                                  {node.description}
-                                </div>
-
-                                <div className="grid grid-cols-2 gap-3 text-[9px] font-mono uppercase tracking-[0.2em] text-white/30 mb-4">
-                                  <div>Entropy: <span className="text-white/70">{node.entropy}</span></div>
-                                  <div>Node: <span className="text-white/70">{node.id}</span></div>
-                                </div>
-
-                                <div className="pt-5 border-t border-white/5">
-                                  <div className="flex items-center gap-2 text-[9px] font-mono uppercase tracking-[0.2em] text-white/30">
-                                    <Users size={10} className="text-blue-400" />
-                                    <span>{node.committee}</span>
+                                  <div className="grid grid-cols-2 gap-3 text-[9px] font-mono uppercase tracking-[0.2em] text-white/30 mb-4">
+                                    <div>Entropy: <span className="text-white/70">{node.entropy}</span></div>
+                                    <div>Node: <span className="text-white/70">{node.id}</span></div>
                                   </div>
-                                </div>
 
-                                <div className="absolute -bottom-2 -left-2 text-[7px] font-mono text-white/10 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  X: {index.toFixed(2)} Y: 0.00
-                                </div>
-                              </motion.div>
+                                  <div className="pt-5 border-t border-white/5">
+                                    <div className="flex items-center gap-2 text-[9px] font-mono uppercase tracking-[0.2em] text-white/30">
+                                      <Users size={10} className="text-blue-400" />
+                                      <span>{node.committee}</span>
+                                    </div>
+                                  </div>
 
-                              {index < mappedNodes.length - 1 && (
-                                <div className="absolute top-1/2 -right-12 w-12 h-px z-0">
-                                  <div className="absolute inset-0 bg-white/10" />
-                                  <motion.div
-                                    animate={{ x: [-12, 48], opacity: [0, 1, 0] }}
-                                    transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
-                                    className="w-4 h-full bg-blue-400 blur-sm"
-                                  />
-                                </div>
-                              )}
-                            </div>
-                          ))}
+                                  <div className="absolute -bottom-2 -left-2 text-[7px] font-mono text-white/10 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    X: {index.toFixed(2)} Y: 0.00
+                                  </div>
+                                </motion.div>
+                              </div>
+                            );
+                          })}
                         </div>
                       </div>
                     </div>
