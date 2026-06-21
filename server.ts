@@ -9835,6 +9835,35 @@ async function startServer() {
     });
   });
 
+  app.get("/.well-known/x402.json", (_req, res) => {
+    res.json({
+      x402_version: 2,
+      provider: "UACP V3 — Governed Plan Compiler & Orchestration Engine",
+      network: "eip155:8453",
+      payTo: "0xCC34553b4e6332ffb9C1b61E22436ACA53113D1d",
+      currency: "USDC",
+      identity: {
+        veklom_id_app: "6a20f24cc341f72c2f573eb5",
+        veklom_id_wallet: "0x3a74772e925b54F7dAD7FD95c9Ba30825033f970",
+        verification_domain: "veklom-id.vercel.app",
+      },
+      routes: [
+        { route: "POST /api/compile", price: "$0.015", description: "Compile agent intent into a deterministic governed plan with proof hash.", tags: ["gpc", "compile", "plan", "governance", "veklom"] },
+        { route: "POST /api/runs", price: "$0.020", description: "Execute a compiled governed plan. All steps are policy-checked and evidence-sealed.", tags: ["gpc", "run", "execute", "governed", "veklom"] },
+        { route: "GET /api/archives", price: "$0.005", description: "Query immutable governance archives with hash-chain integrity.", tags: ["gpc", "archives", "audit", "veklom"] },
+        { route: "GET /api/pillars", price: "$0.003", description: "List active governance pillars and mandates.", tags: ["gpc", "pillars", "governance", "veklom"] },
+        { route: "GET /api/committees", price: "$0.003", description: "List active decision-making committees and authority levels.", tags: ["gpc", "committees", "governance", "veklom"] },
+        { route: "GET /api/operators", price: "$0.003", description: "List registered operators and their skill capabilities.", tags: ["gpc", "operators", "workers", "veklom"] },
+        { route: "GET /api/governance-registry", price: "$0.003", description: "Full governance registry snapshot.", tags: ["gpc", "registry", "governance", "veklom"] },
+        { route: "GET /api/workflows", price: "$0.003", description: "List active workflow definitions.", tags: ["gpc", "workflows", "orchestration", "veklom"] },
+      ],
+      discovery: {
+        bazaar: "https://bazaar.cdp.coinbase.com",
+        veklom_id: "https://veklom-id.vercel.app",
+      },
+    });
+  });
+
   app.get("/api/governance-registry", (_req, res) => res.json(governanceRegistry));
   app.get("/api/pillars", (_req, res) => res.json(activePillars()));
   app.get("/api/committees", (_req, res) => res.json(activeCommittees()));
