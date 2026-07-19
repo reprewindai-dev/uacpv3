@@ -8,6 +8,8 @@ RUN npm ci --legacy-peer-deps
 
 # Copy source code
 COPY . .
+# Install missing peer dependency
+RUN npm install react-is --legacy-peer-deps
 
 # Build the frontend (Vite)
 RUN npm run build
