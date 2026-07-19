@@ -1,0 +1,1 @@
+import IoRedis from 'ioredis';

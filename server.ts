@@ -15,6 +15,7 @@ import { Search } from "@upstash/search";
 import { XMLParser } from "fast-xml-parser";
 import { createServer as createViteServer } from "vite";
 import { WebSocket, WebSocketServer } from "ws";
+import { createRedisAdapter, RedisAdapter } from "./src/redisAdapter";
 import type {
   ArchiveEntry,
   ArchiveRecord,
@@ -4130,7 +4131,7 @@ function addArchive(entry: Omit<ArchiveEntry, "id" | "createdAt">) {
 }
 
 function eventStreamRedisBacked() {
-  return Boolean(rateLimitRuntime.redis);
+  return Boolean(rateLimitRuntime.adapter);
 }
 
 function buildEventStreamEnvelope(payload: unknown) {
@@ -4150,10 +4151,10 @@ function sendEventStreamFrame(res: express.Response, envelope: ReturnType<typeof
 }
 
 async function persistEventStreamFrame(envelope: ReturnType<typeof buildEventStreamEnvelope>) {
-  if (!rateLimitRuntime.redis) return;
+  if (!rateLimitRuntime.adapter) return;
   try {
-    await rateLimitRuntime.redis.lpush("uacp:v5:event-stream", JSON.stringify(envelope));
-    await rateLimitRuntime.redis.ltrim("uacp:v5:event-stream", 0, 499);
+    await rateLimitRuntime.adapter.lpush("uacp:v5:event-stream", JSON.stringify(envelope));
+    await rateLimitRuntime.adapter.ltrim("uacp:v5:event-stream", 0, 499);
   } catch (error) {
     console.error("[uacp] event stream redis write failed:", error instanceof Error ? error.message : error);
   }
@@ -8407,24 +8408,23 @@ function parsePositiveIntegerEnv(value: string | undefined, fallback: number) {
 }
 
 function initializeRateLimitRuntime() {
-  if (!UPSTASH_REDIS_REST_URL || !UPSTASH_REDIS_REST_TOKEN) {
+  const { adapter, provider } = createRedisAdapter(REDIS_URL, UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN);
+
+  if (!adapter) {
     return {
-      redis: null,
+      adapter: null,
       limiters: null,
-      status: buildRateLimitStatus(null),
+      status: buildRateLimitStatus(null, provider),
     };
   }
 
   try {
-    const redis = new Redis({
-      url: UPSTASH_REDIS_REST_URL,
-      token: UPSTASH_REDIS_REST_TOKEN,
-    });
+    const redisForRatelimit = (adapter as any).client || adapter;
 
     const limiters = {
       public_mutation: {
         free: new Ratelimit({
-          redis,
+          redis: redisForRatelimit as any,
           analytics: true,
           prefix: rateLimitProfiles.public_mutation.free.prefix,
           limiter: Ratelimit.slidingWindow(
@@ -8433,7 +8433,7 @@ function initializeRateLimitRuntime() {
           ),
         }),
         paid: new Ratelimit({
-          redis,
+          redis: redisForRatelimit as any,
           analytics: true,
           prefix: rateLimitProfiles.public_mutation.paid.prefix,
           limiter: Ratelimit.slidingWindow(
@@ -8444,7 +8444,7 @@ function initializeRateLimitRuntime() {
       },
       heavy_mutation: {
         free: new Ratelimit({
-          redis,
+          redis: redisForRatelimit as any,
           analytics: true,
           prefix: rateLimitProfiles.heavy_mutation.free.prefix,
           limiter: Ratelimit.slidingWindow(
@@ -8453,7 +8453,7 @@ function initializeRateLimitRuntime() {
           ),
         }),
         paid: new Ratelimit({
-          redis,
+          redis: redisForRatelimit as any,
           analytics: true,
           prefix: rateLimitProfiles.heavy_mutation.paid.prefix,
           limiter: Ratelimit.slidingWindow(
@@ -8464,7 +8464,7 @@ function initializeRateLimitRuntime() {
       },
       refresh: {
         free: new Ratelimit({
-          redis,
+          redis: redisForRatelimit as any,
           analytics: true,
           prefix: rateLimitProfiles.refresh.free.prefix,
           limiter: Ratelimit.slidingWindow(
@@ -8473,7 +8473,7 @@ function initializeRateLimitRuntime() {
           ),
         }),
         paid: new Ratelimit({
-          redis,
+          redis: redisForRatelimit as any,
           analytics: true,
           prefix: rateLimitProfiles.refresh.paid.prefix,
           limiter: Ratelimit.slidingWindow(
@@ -8485,23 +8485,23 @@ function initializeRateLimitRuntime() {
     } satisfies Record<RateLimitProfile, Record<RateLimitTier, Ratelimit>>;
 
     return {
-      redis,
+      adapter,
       limiters,
-      status: buildRateLimitStatus(null),
+      status: buildRateLimitStatus(null, provider),
     };
   } catch (error) {
     return {
-      redis: null,
+      adapter: null,
       limiters: null,
-      status: buildRateLimitStatus(error instanceof Error ? error.message : "Unknown Upstash Redis bootstrap error."),
+      status: buildRateLimitStatus(error instanceof Error ? error.message : "Unknown Redis bootstrap error.", provider),
     };
   }
 }
 
-function buildRateLimitStatus(initError: string | null): RateLimitStatus {
+function buildRateLimitStatus(initError: string | null, provider: "native" | "upstash-redis" | "disabled"): RateLimitStatus {
   return {
-    enabled: Boolean(UPSTASH_REDIS_REST_URL && UPSTASH_REDIS_REST_TOKEN && !initError),
-    provider: UPSTASH_REDIS_REST_URL && UPSTASH_REDIS_REST_TOKEN && !initError ? "upstash-redis" : "disabled",
+    enabled: provider !== "disabled" && !initError,
+    provider,
     trustTierHeader: RATE_LIMIT_TRUST_ACCESS_TIER_HEADER,
     initError,
     profiles: {

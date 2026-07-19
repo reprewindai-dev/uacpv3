@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { motion } from "motion/react";
 import { DeterministicEngineSurface } from "./components/DeterministicEngineSurface";
+import GpcPage from "./components/gpc/GpcSurface";
 import type {
   ArchiveEntry,
   BackendProductEvent,
@@ -111,6 +112,7 @@ const surfaceLabels: Record<SurfaceId, string> = {
   "silicon-valley": "Silicon Valley",
   archives: "Archives",
   status: "Status",
+  gpc: "GPC Pipeline",
 };
 
 export default function App() {
@@ -444,6 +446,12 @@ export default function App() {
                 onClick={() => setActiveSurface(surface.id)}
               />
             ))}
+            <SurfaceButton
+              key="gpc"
+              active={activeSurface === "gpc"}
+              label="GPC Pipeline"
+              onClick={() => setActiveSurface("gpc")}
+            />
           </nav>
 
           <div className="flex items-center gap-3">
@@ -491,6 +499,8 @@ export default function App() {
             onCreatePlan={createPlan}
             onRouteToSunnyvale={routeToSunnyvale}
           />
+        ) : activeSurface === "gpc" ? (
+          <GpcPage />
         ) : (
           <div className="h-full min-h-0 grid grid-cols-12 gap-4">
             {activeSurface === "sunnyvale" && (
