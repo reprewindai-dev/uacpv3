@@ -16,6 +16,15 @@ import { XMLParser } from "fast-xml-parser";
 import { createServer as createViteServer } from "vite";
 import { WebSocket, WebSocketServer } from "ws";
 import { createRedisAdapter, RedisAdapter } from "./src/redisAdapter";
+import { PortType } from "./src/types/gpc";
+import type {
+  ExecutionEvent,
+  GPCComponentDefinition,
+  GPCPipelineGraph,
+  NLToGraphRequest,
+  NLToGraphResult,
+  PipelineCompilationResult,
+} from "./src/types/gpc";
 import type {
   ArchiveEntry,
   ArchiveRecord,
@@ -113,6 +122,7 @@ const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "";
 const UACP_OUTBOUND_REPLY_TO = process.env.UACP_OUTBOUND_REPLY_TO || "";
 const UACP_OUTBOUND_MAX_SENDS_PER_RUN = Math.max(1, Number(process.env.UACP_OUTBOUND_MAX_SENDS_PER_RUN || 2) || 2);
 const DATABASE_URL = process.env.DATABASE_URL || "";
+const REDIS_URL = process.env.REDIS_URL || "";
 const DATABASE_SSL_MODE = (process.env.DATABASE_SSL_MODE || "require").trim().toLowerCase();
 const UPSTASH_REDIS_REST_URL = process.env.UPSTASH_REDIS_REST_URL || "";
 const UPSTASH_REDIS_REST_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN || "";
@@ -188,6 +198,31 @@ const workerGroupBlueprints: WorkerGroupBlueprint[] = [
     handoffTargets: ["pillar_council", "growth_sales", "operations_intake"],
   },
 ];
+const gpcComponentCatalog: GPCComponentDefinition[] = [
+  {
+    node_type: "input.intent",
+    display_name: "Intent Input",
+    description: "Seeds a pipeline from operator intent.",
+    category: "input",
+    output_ports: [{ id: "out", port_type: PortType.DOCUMENTS, label: "Out" }],
+  },
+  {
+    node_type: "transform.normalize",
+    display_name: "Normalize",
+    description: "Cleans and structures intent text.",
+    category: "transform",
+    input_ports: [{ id: "in", port_type: PortType.DOCUMENTS, label: "In", required: true }],
+    output_ports: [{ id: "out", port_type: PortType.DOCUMENTS, label: "Out" }],
+  },
+  {
+    node_type: "output.result",
+    display_name: "Result Output",
+    description: "Emits the compiled result.",
+    category: "output",
+    input_ports: [{ id: "in", port_type: PortType.DOCUMENTS, label: "In", required: true }],
+  },
+];
+const gpcPipelineRegistry = new Map<string, GPCPipelineGraph>();
 const REQUESTED_MODEL_PROVIDER = String(process.env.UACP_MODEL_PROVIDER || "").toLowerCase();
 const GEMINI_PRIMARY_ENABLED = process.env.UACP_ENABLE_GEMINI_PRIMARY === "true";
 const ALLOW_GEMINI_FALLBACK = process.env.ALLOW_GEMINI_FALLBACK === "true";
@@ -287,7 +322,7 @@ type RateLimitProfile = "public_mutation" | "heavy_mutation" | "refresh";
 type RateLimitWindow = Parameters<typeof Ratelimit.slidingWindow>[1];
 type RateLimitStatus = {
   enabled: boolean;
-  provider: "upstash-redis" | "disabled";
+  provider: "native" | "upstash-redis" | "disabled";
   trustTierHeader: boolean;
   initError: string | null;
   profiles: Record<RateLimitProfile, { free: { limit: number; window: RateLimitWindow }; paid: { limit: number; window: RateLimitWindow } }>;
@@ -9731,6 +9766,231 @@ async function executeRun(runId: string) {
   }
 }
 
+function createDefaultGpcGraph(pipelineId: string, tenantId: string, intent = ''): GPCPipelineGraph {
+  return {
+    pipeline_id: pipelineId,
+    tenant_id: tenantId,
+    name: intent ? `Generated pipeline: ${intent.slice(0, 48)}` : 'Generated pipeline',
+    description: intent || 'Deterministic generated pipeline.',
+    schema_version: '1.0',
+    prompt_version: '1.0',
+    created_at: now(),
+    updated_at: now(),
+    metadata: { source: 'uacp-gpc', intent },
+    data_residency_region: 'ca-central-1',
+    nodes: [
+      {
+        id: 'input',
+        node_type: 'input.intent',
+        label: 'Intent Input',
+        config: { intent },
+        input_ports: [],
+        output_ports: [{ id: 'out', port_type: PortType.DOCUMENTS, label: 'Out' }],
+        position: { x: 80, y: 120 },
+      },
+      {
+        id: 'normalize',
+        node_type: 'transform.normalize',
+        label: 'Normalize',
+        config: { intent },
+        input_ports: [{ id: 'in', port_type: PortType.DOCUMENTS, label: 'In', required: true }],
+        output_ports: [{ id: 'out', port_type: PortType.DOCUMENTS, label: 'Out' }],
+        position: { x: 340, y: 120 },
+      },
+      {
+        id: 'result',
+        node_type: 'output.result',
+        label: 'Result Output',
+        config: { intent },
+        input_ports: [{ id: 'in', port_type: PortType.DOCUMENTS, label: 'In', required: true }],
+        output_ports: [],
+        position: { x: 600, y: 120 },
+      },
+    ],
+    edges: [
+      { id: 'edge_input_normalize', source_node_id: 'input', source_port_id: 'out', target_node_id: 'normalize', target_port_id: 'in' },
+      { id: 'edge_normalize_result', source_node_id: 'normalize', source_port_id: 'out', target_node_id: 'result', target_port_id: 'in' },
+    ],
+  };
+}
+
+function normalizeGpcGraph(payload: unknown, fallbackTenantId = 'default'): GPCPipelineGraph | null {
+  if (!payload || typeof payload !== 'object') return null;
+  const record = payload as Record<string, unknown>;
+  const pipelineId = typeof record.pipeline_id === 'string' && record.pipeline_id.trim() ? record.pipeline_id.trim() : '';
+  const tenantId = typeof record.tenant_id === 'string' && record.tenant_id.trim() ? record.tenant_id.trim() : fallbackTenantId;
+  const nodes = Array.isArray(record.nodes) ? record.nodes.filter((node) => node && typeof node === 'object') : [];
+  const edges = Array.isArray(record.edges) ? record.edges.filter((edge) => edge && typeof edge === 'object') : [];
+
+  if (!pipelineId || nodes.length === 0) return null;
+
+  return {
+    pipeline_id: pipelineId,
+    tenant_id: tenantId,
+    name: typeof record.name === 'string' ? record.name : undefined,
+    description: typeof record.description === 'string' ? record.description : undefined,
+    schema_version: typeof record.schema_version === 'string' ? record.schema_version : '1.0',
+    prompt_version: typeof record.prompt_version === 'string' ? record.prompt_version : undefined,
+    created_at: typeof record.created_at === 'string' ? record.created_at : now(),
+    updated_at: now(),
+    metadata: record.metadata && typeof record.metadata === 'object' ? (record.metadata as Record<string, unknown>) : undefined,
+    data_residency_region:
+      record.data_residency_region === 'ca-central-1' || record.data_residency_region === 'ca-west-1' || record.data_residency_region === 'on-premise'
+        ? record.data_residency_region
+        : 'ca-central-1',
+    nodes: nodes.map((node, index) => {
+      const value = node as Record<string, unknown>;
+      return {
+        id: String(value.id || `node_${index}`),
+        node_type: String(value.node_type || 'transform.normalize'),
+        label: typeof value.label === 'string' ? value.label : undefined,
+        config: value.config && typeof value.config === 'object' ? (value.config as Record<string, unknown>) : {},
+        input_ports: Array.isArray(value.input_ports) ? (value.input_ports as GPCComponentDefinition['input_ports']) : undefined,
+        output_ports: Array.isArray(value.output_ports) ? (value.output_ports as GPCComponentDefinition['output_ports']) : undefined,
+        position:
+          value.position && typeof value.position === 'object'
+            ? {
+                x: Number((value.position as { x?: unknown }).x || 0),
+                y: Number((value.position as { y?: unknown }).y || 0),
+              }
+            : undefined,
+        selected: Boolean(value.selected),
+        hidden: Boolean(value.hidden),
+        last_updated: typeof value.last_updated === 'number' ? value.last_updated : undefined,
+        last_executed: typeof value.last_executed === 'number' ? value.last_executed : undefined,
+      };
+    }),
+    edges: edges.map((edge, index) => {
+      const value = edge as Record<string, unknown>;
+      return {
+        id: String(value.id || `edge_${index}`),
+        source_node_id: String(value.source_node_id || value.source || ''),
+        source_port_id: String(value.source_port_id || value.sourceHandle || 'out'),
+        target_node_id: String(value.target_node_id || value.target || ''),
+        target_port_id: String(value.target_port_id || value.targetHandle || 'in'),
+      };
+    }).filter((edge) => edge.source_node_id && edge.target_node_id),
+  };
+}
+
+function resolveGpcGraph(pipelineId: string, tenantId = 'default', payloadGraph?: unknown) {
+  const normalized = normalizeGpcGraph(payloadGraph, tenantId);
+  if (normalized) return normalized;
+  const registryGraph = gpcPipelineRegistry.get(pipelineId);
+  if (registryGraph) return registryGraph;
+  return createDefaultGpcGraph(pipelineId || `pipeline_${Date.now()}`, tenantId);
+}
+
+function topologicalSortGpcGraph(graph: GPCPipelineGraph) {
+  const incoming = new Map<string, number>();
+  const outgoing = new Map<string, string[]>();
+  for (const node of graph.nodes) {
+    incoming.set(node.id, 0);
+    outgoing.set(node.id, []);
+  }
+  for (const edge of graph.edges) {
+    if (!incoming.has(edge.target_node_id) || !outgoing.has(edge.source_node_id)) continue;
+    incoming.set(edge.target_node_id, (incoming.get(edge.target_node_id) || 0) + 1);
+    outgoing.get(edge.source_node_id)?.push(edge.target_node_id);
+  }
+  const queue = graph.nodes.filter((node) => (incoming.get(node.id) || 0) === 0).map((node) => node.id);
+  const order: string[] = [];
+  while (queue.length > 0) {
+    const nodeId = queue.shift()!;
+    order.push(nodeId);
+    for (const next of outgoing.get(nodeId) || []) {
+      incoming.set(next, (incoming.get(next) || 0) - 1);
+      if ((incoming.get(next) || 0) === 0) queue.push(next);
+    }
+  }
+  for (const node of graph.nodes) {
+    if (!order.includes(node.id)) order.push(node.id);
+  }
+  return order;
+}
+
+function buildGpcParallelLevels(graph: GPCPipelineGraph, order: string[]) {
+  const depth = new Map<string, number>();
+  for (const node of graph.nodes) depth.set(node.id, 0);
+  const outgoing = new Map<string, string[]>();
+  for (const node of graph.nodes) outgoing.set(node.id, []);
+  for (const edge of graph.edges) {
+    outgoing.get(edge.source_node_id)?.push(edge.target_node_id);
+  }
+  for (const nodeId of order) {
+    const nextDepth = depth.get(nodeId) || 0;
+    for (const target of outgoing.get(nodeId) || []) {
+      depth.set(target, Math.max(depth.get(target) || 0, nextDepth + 1));
+    }
+  }
+  const levels = new Map<number, string[]>();
+  for (const nodeId of order) {
+    const level = depth.get(nodeId) || 0;
+    const list = levels.get(level) || [];
+    list.push(nodeId);
+    levels.set(level, list);
+  }
+  return [...levels.entries()].sort((a, b) => a[0] - b[0]).map(([, nodeIds]) => nodeIds);
+}
+
+function buildGpcPythonCode(graph: GPCPipelineGraph, order: string[]) {
+  const lines = [
+    'def run_pipeline(context):',
+    `    # pipeline_id: ${graph.pipeline_id}`,
+    `    # tenant_id: ${graph.tenant_id}`,
+  ];
+  for (const nodeId of order) {
+    const node = graph.nodes.find((entry) => entry.id === nodeId);
+    lines.push(`    # node ${nodeId}: ${node?.node_type || 'unknown'}`);
+    lines.push(`    context['${nodeId}'] = {'status': 'complete', 'node_type': '${node?.node_type || 'unknown'}'}`);
+  }
+  lines.push('    return context');
+  return lines.join('\n');
+}
+
+function compileGpcPipeline(graph: GPCPipelineGraph): PipelineCompilationResult {
+  const executionOrder = topologicalSortGpcGraph(graph);
+  const parallelLevels = buildGpcParallelLevels(graph, executionOrder);
+  return {
+    success: true,
+    python_code: buildGpcPythonCode(graph, executionOrder),
+    node_count: graph.nodes.length,
+    execution_order: executionOrder,
+    parallel_levels: parallelLevels,
+    compilation_timestamp: now(),
+    warnings: [],
+  };
+}
+
+function buildGpcGraphFromIntent(request: NLToGraphRequest): NLToGraphResult {
+  const intent = request.user_intent.trim();
+  if (!intent) {
+    return { success: false, reasoning: 'Intent is empty.', errors: ['user_intent is required.'] };
+  }
+
+  const pipelineId = `gpc_${hashPayload({ tenant_id: request.tenant_id, intent }).slice(0, 12)}`;
+  const graph = createDefaultGpcGraph(pipelineId, request.tenant_id || 'default', intent);
+  graph.data_residency_region = request.data_residency_region || 'ca-central-1';
+  graph.metadata = {
+    ...(graph.metadata || {}),
+    available_components: request.available_components || [],
+    intent_tokens: intent.toLowerCase().split(/\W+/).filter((token) => token.length > 2).slice(0, 8),
+  };
+  gpcPipelineRegistry.set(graph.pipeline_id, graph);
+
+  return {
+    success: true,
+    pipeline_graph: graph,
+    reasoning: 'Deterministic pipeline generated from operator intent.',
+    retry_count: 0,
+    confidence_score: 0.84,
+  };
+}
+
+function writeSseEvent(res: express.Response, payload: unknown) {
+  res.write(`data: ${JSON.stringify(payload)}\n\n`);
+}
+
 async function startServer() {
   validateV3ReferenceData();
   await loadGovernanceRegistry();
@@ -9755,8 +10015,8 @@ async function startServer() {
   const httpServer = createServer(app);
   const wss = new WebSocketServer({ server: httpServer });
 
-  app.set("trust proxy", true);
-  app.use(cors());
+  app.set("trust proxy", 1);
+  app.use(cors({ origin: false }));
   app.use(express.json({
     limit: "1mb",
     verify: (req, _res, buf) => {
@@ -9787,6 +10047,96 @@ async function startServer() {
       userEmail: process.env.USER_EMAIL || "FOUNDER",
     };
     res.json(payload);
+  });
+
+  app.get("/api/v1/gpc/components", (_req, res) => {
+    res.json(gpcComponentCatalog);
+  });
+
+  app.post("/api/v1/gpc/generate", withPublicRateLimit("public_mutation"), async (req, res) => {
+    const body = ensureRecord(req.body || {}, "gpcGenerateRequest");
+    const request: NLToGraphRequest = {
+      tenant_id: typeof body.tenant_id === "string" && body.tenant_id.trim() ? body.tenant_id.trim() : "default",
+      user_intent: typeof body.user_intent === "string" ? body.user_intent : "",
+      available_components: Array.isArray(body.available_components) ? body.available_components.filter((item) => typeof item === "string") : undefined,
+      data_residency_region:
+        body.data_residency_region === "ca-central-1" || body.data_residency_region === "ca-west-1" || body.data_residency_region === "on-premise"
+          ? body.data_residency_region
+          : undefined,
+    };
+    const result = buildGpcGraphFromIntent(request);
+    if (!result.success || !result.pipeline_graph) {
+      res.status(400).json(result);
+      return;
+    }
+    gpcPipelineRegistry.set(result.pipeline_graph.pipeline_id, result.pipeline_graph);
+    res.json(result);
+  });
+
+  app.post("/api/v1/gpc/compile", withPublicRateLimit("heavy_mutation"), async (req, res) => {
+    const body = ensureRecord(req.body || {}, "gpcCompileRequest");
+    const pipelineId = typeof body.pipeline_id === "string" ? body.pipeline_id.trim() : "";
+    const tenantId = typeof body.tenant_id === "string" && body.tenant_id.trim() ? body.tenant_id.trim() : "default";
+    const graph = resolveGpcGraph(pipelineId, tenantId, body.graph);
+    gpcPipelineRegistry.set(graph.pipeline_id, graph);
+    res.json(compileGpcPipeline(graph));
+  });
+
+  app.get("/api/v1/gpc/execute", withPublicRateLimit("heavy_mutation"), (req, res) => {
+    const pipelineId = String(req.query.pipeline_id || "").trim();
+    const tenantId = String(req.query.tenant_id || "default").trim() || "default";
+    const graph = resolveGpcGraph(pipelineId, tenantId);
+    const compiled = compileGpcPipeline(graph);
+    gpcPipelineRegistry.set(graph.pipeline_id, graph);
+
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+
+    let closed = false;
+    const send = (event: ExecutionEvent) => writeSseEvent(res, event);
+    req.on("close", () => {
+      closed = true;
+      res.end();
+    });
+
+    void (async () => {
+      send({ event: "start", message: "Execution started." });
+      for (let index = 0; index < compiled.execution_order.length; index += 1) {
+        if (closed) return;
+        const nodeId = compiled.execution_order[index];
+        const node = graph.nodes.find((entry) => entry.id === nodeId);
+        send({ event: "node_start", node_id: nodeId, index });
+        await new Promise((resolve) => setTimeout(resolve, 80));
+        if (closed) return;
+        send({
+          event: "node_complete",
+          node_id: nodeId,
+          index,
+          success: true,
+          preview: {
+            node_id: nodeId,
+            rows: 1,
+            columns: ["node_id", "node_type", "status"],
+            sample: [[nodeId, node?.node_type || "unknown", "complete"]],
+            timestamp: Date.now(),
+          },
+        });
+        await new Promise((resolve) => setTimeout(resolve, 40));
+      }
+      if (!closed) {
+        send({ event: "complete", success: true, message: "Execution completed." });
+        res.end();
+      }
+    })().catch((error) => {
+      if (!closed) {
+        send({ event: "error", error: error instanceof Error ? error.message : "Execution failed." });
+        res.end();
+      }
+    });
   });
 
   app.get("/api/health", async (_req, res) => {

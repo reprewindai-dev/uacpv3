@@ -54,6 +54,7 @@ export function useGpc(options: UseGpcOptions = {}) {
           body: JSON.stringify({
             pipeline_id: actualPipelineId,
             tenant_id: graph.tenant_id,
+            graph,
           }),
         });
 
@@ -215,6 +216,7 @@ export function useGpc(options: UseGpcOptions = {}) {
           body: JSON.stringify({
             tenant_id: 'default',
             user_intent: intent,
+            available_components: [],
             data_residency_region: dataResidencyRegion,
           } as NLToGraphRequest),
         });

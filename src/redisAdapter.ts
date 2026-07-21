@@ -17,32 +17,32 @@ export class UpstashRedisAdapter implements RedisAdapter {
   constructor(public client: UpstashRedis) {}
 
   async sadd(key: string, ...members: unknown[]): Promise<number> {
-    return this.client.sadd(key, ...members);
+    return (this.client as any).sadd(key, ...members);
   }
   async eval<TData = unknown>(script: string, keys: string[], args: unknown[]): Promise<TData> {
-    return this.client.eval(script, keys, args);
+    return (this.client as any).eval(script, keys, args);
   }
   async lpush(key: string, ...elements: string[]): Promise<number> {
-    return this.client.lpush(key, ...elements);
+    return (this.client as any).lpush(key, ...elements);
   }
   async ltrim(key: string, start: number, stop: number): Promise<string> {
-    return this.client.ltrim(key, start, stop);
+    return (this.client as any).ltrim(key, start, stop);
   }
   async get<T>(key: string): Promise<T | null> {
     return this.client.get<T>(key);
   }
   async set(key: string, value: unknown): Promise<string | null> {
-    return this.client.set(key, value);
+    return (this.client as any).set(key, value) as Promise<string | null>;
   }
   async publish(channel: string, message: string): Promise<number> {
-    return this.client.publish(channel, message);
+    return (this.client as any).publish(channel, message);
   }
   async xadd(key: string, id: string, args: Record<string, string>): Promise<string> {
     const arr = Object.entries(args).flat();
-    return this.client.xadd(key, id, ...arr);
+    return (this.client as any).xadd(key, id, ...arr);
   }
   async xrange(key: string, start: string, end: string): Promise<any> {
-    return this.client.xrange(key, start, end);
+    return (this.client as any).xrange(key, start, end);
   }
 }
 
@@ -50,39 +50,39 @@ export class NativeRedisAdapter implements RedisAdapter {
   constructor(public client: IoRedis) {}
 
   async sadd(key: string, ...members: unknown[]): Promise<number> {
-    return this.client.sadd(key, ...(members as string[]));
+    return (this.client as any).sadd(key, ...(members as string[]));
   }
   async eval<TData = unknown>(script: string, keys: string[], args: unknown[]): Promise<TData> {
-    return this.client.eval(script, keys.length, ...keys, ...(args as string[])) as Promise<TData>;
+    return (this.client as any).eval(script, keys.length, ...keys, ...(args as any[])) as Promise<TData>;
   }
   async lpush(key: string, ...elements: string[]): Promise<number> {
-    return this.client.lpush(key, ...elements);
+    return (this.client as any).lpush(key, ...elements);
   }
   async ltrim(key: string, start: number, stop: number): Promise<string> {
-    return this.client.ltrim(key, start, stop) as any;
+    return (this.client as any).ltrim(key, start, stop) as any;
   }
   async get<T>(key: string): Promise<T | null> {
-    const val = await this.client.get(key);
-    if (!val) return null;
+    const val = await (this.client as any).get(key);
+    if (val === null || val === undefined) return null;
     try {
-      return JSON.parse(val) as T;
+      return JSON.parse(String(val)) as T;
     } catch {
-      return val as any;
+      return String(val) as any;
     }
   }
   async set(key: string, value: unknown): Promise<string | null> {
     const val = typeof value === 'string' ? value : JSON.stringify(value);
-    return this.client.set(key, val) as any;
+    return (this.client as any).set(key, val) as any;
   }
   async publish(channel: string, message: string): Promise<number> {
-    return this.client.publish(channel, message);
+    return (this.client as any).publish(channel, message);
   }
   async xadd(key: string, id: string, args: Record<string, string>): Promise<string> {
     const arr = Object.entries(args).flat();
-    return this.client.xadd(key, id, ...arr);
+    return (this.client as any).xadd(key, id, ...arr);
   }
   async xrange(key: string, start: string, end: string): Promise<any> {
-    return this.client.xrange(key, start, end);
+    return (this.client as any).xrange(key, start, end);
   }
 }
 

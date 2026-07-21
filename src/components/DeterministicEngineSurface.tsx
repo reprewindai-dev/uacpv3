@@ -863,6 +863,7 @@ function ConvergenceBar({
   progress,
   color,
 }: {
+  key?: string;
   label: string;
   value: string;
   progress: number;

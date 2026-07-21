@@ -1728,6 +1728,7 @@ function SurfaceButton({
   label,
   onClick,
 }: {
+  key?: string;
   active: boolean;
   label: string;
   onClick: () => void;
