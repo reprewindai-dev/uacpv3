@@ -1,4 +1,4 @@
-export type SurfaceId = "deterministic-engine" | "sunnyvale" | "silicon-valley" | "archives" | "status" | "gpc";
+export type SurfaceId = "deterministic-engine" | "sunnyvale" | "silicon-valley" | "archives" | "status" | "gpc" | "terminal";
 
 export type PlanStatus = "draft" | "review" | "approved" | "active" | "completed";
 export type RunStatus = "queued" | "executing" | "completed" | "blocked" | "failed";
