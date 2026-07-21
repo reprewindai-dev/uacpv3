@@ -23,7 +23,7 @@ import {
 import { motion } from "motion/react";
 import { DeterministicEngineSurface } from "./components/DeterministicEngineSurface";
 import GpcPage from "./components/gpc/GpcSurface";
-import TerminalSurface from "./components/terminal/TerminalSurface";
+import TerminalSurface from "./components/uacp-terminal/TerminalSurface";
 import type {
   ArchiveEntry,
   BackendProductEvent,
@@ -114,7 +114,7 @@ const surfaceLabels: Record<SurfaceId, string> = {
   archives: "Archives",
   status: "Status",
   gpc: "GPC Pipeline",
-  terminal: "Terminal",
+  "uacp-terminal": "UACP Terminal",
 };
 
 export default function App() {
@@ -503,7 +503,7 @@ export default function App() {
           />
         ) : activeSurface === "gpc" ? (
           <GpcPage />
-        ) : activeSurface === "terminal" ? (
+        ) : activeSurface === "uacp-terminal" ? (
           <TerminalSurface />
         ) : (
           <div className="h-full min-h-0 grid grid-cols-12 gap-4">
