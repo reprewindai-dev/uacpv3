@@ -8,9 +8,11 @@
 'use client';
 
 import React, { useState, useCallback } from 'react';
-import { useGpc } from '../../hooks/useGpc';
-import { GpcCanvas, GpcPropertyPanel } from './GpcCanvas';
-import { useExecutionStore, usePreviewStore } from '../../stores/gpc_stores';
+import Shell from '@/components/Shell';
+import { useGpc } from '@/lib/gpc/useGpc';
+import { GpcCanvas, GpcPropertyPanel } from '@/components/gpc/GpcCanvas';
+import { useExecutionStore, usePreviewStore } from '@/lib/gpc/stores';
+import { ModuleHeader, Pill } from '@/components/telemetry';
 import { BookOpen, Play, AlertCircle, CheckCircle, AlertTriangle } from 'lucide-react';
 
 interface CompilationModal {
@@ -87,16 +89,24 @@ export default function GpcPage() {
   }, [intentInput, generateFromIntent]);
 
   return (
-    <div className="flex flex-col h-full bg-slate-50 text-slate-900 p-6">
+    <Shell>
       {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-          GPC Pipeline Generator
-        </h1>
-        <p className="text-slate-500 text-sm mt-1">
-          Convert messy intent into deterministic, executed pipelines.
-        </p>
-      </div>
+      <ModuleHeader
+        breadcrumb="GPC · Generative Pipeline Compiler"
+        title="Pipeline Generator"
+        subtitle="Convert messy intent into deterministic, executed pipelines."
+        pills={
+          <>
+            <Pill tone="green" dot>
+              Backend live
+            </Pill>
+            <Pill tone="cyan">Compile → Execute</Pill>
+            <Pill tone="amber" dot={isExecuting}>
+              {isExecuting ? 'Running' : 'Ready'}
+            </Pill>
+          </>
+        }
+      />
 
       {/* Toast notification */}
       {toast && (
@@ -312,6 +322,6 @@ export default function GpcPage() {
           </div>
         </div>
       )}
-    </div>
+    </Shell>
   );
 }

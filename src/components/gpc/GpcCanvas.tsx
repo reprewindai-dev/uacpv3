@@ -28,8 +28,13 @@ import ReactFlow, {
   addEdge,
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { useCanvasStore, useExecutionStore, usePreviewStore, useSelectedNodeIds } from '../../stores/gpcStore';
-import { GPCNode, GPCEdge } from '../../types/gpc';
+import {
+  useCanvasStore,
+  useExecutionStore,
+  usePreviewStore,
+  useSelectedNodeIds,
+} from '../../stores/gpc_stores';
+import { GPCNode, GPCEdge } from '../../types/gpc_types';
 
 // ============================================================================
 // CUSTOM NODE COMPONENT (Memoized)

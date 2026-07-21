@@ -7,14 +7,14 @@
  */
 
 import { useCallback, useState } from 'react';
-import { useCanvasStore, useExecutionStore, usePreviewStore } from '../stores/gpcStore';
+import { useCanvasStore, useExecutionStore, usePreviewStore } from '../stores/gpc_stores';
 import {
   GPCPipelineGraph,
   NLToGraphRequest,
   NLToGraphResult,
   PipelineCompilationResult,
   ExecutionEvent,
-} from '../types/gpc';
+} from '../types/gpc_types';
 
 interface UseGpcOptions {
   baseUrl?: string;
@@ -54,7 +54,6 @@ export function useGpc(options: UseGpcOptions = {}) {
           body: JSON.stringify({
             pipeline_id: actualPipelineId,
             tenant_id: graph.tenant_id,
-            graph,
           }),
         });
 
@@ -216,7 +215,6 @@ export function useGpc(options: UseGpcOptions = {}) {
           body: JSON.stringify({
             tenant_id: 'default',
             user_intent: intent,
-            available_components: [],
             data_residency_region: dataResidencyRegion,
           } as NLToGraphRequest),
         });
