@@ -7,7 +7,7 @@
 
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
-import { GPCNode, GPCEdge, GPCPipelineGraph, PortType, NodeExecutionState, PreviewData } from '@/types/gpc';
+import { GPCNode, GPCEdge, GPCPipelineGraph, PortType, NodeExecutionState, PreviewData } from '../types/gpc';
 
 // ============================================================================
 // CANVAS STORE — Node/Edge state only (UI structure)
