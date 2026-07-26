@@ -43,7 +43,7 @@
     "reactflow": "^11.11.4",
     "recharts": "^3.8.1",
     "vite": "^6.2.3",
-    "ws": "^8.20.0",
+    "ws": "^8.21.1",
     "zustand": "^5.0.14"
   },
   "devDependencies": {
