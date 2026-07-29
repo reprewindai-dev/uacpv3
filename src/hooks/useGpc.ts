@@ -8,6 +8,7 @@
 
 import { useCallback, useState } from 'react';
 import { useCanvasStore, useExecutionStore, usePreviewStore } from '../stores/gpc_stores';
+import { buildCompileRequest, parseCompilationResponse } from '../gpc/contracts';
 import {
   GPCPipelineGraph,
   NLToGraphRequest,
@@ -51,11 +52,7 @@ export function useGpc(options: UseGpcOptions = {}) {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${typeof window !== 'undefined' ? localStorage.getItem('token') || '' : ''}`,
           },
-          body: JSON.stringify({
-            pipeline_id: actualPipelineId,
-            tenant_id: graph.tenant_id,
-            graph,
-          }),
+          body: JSON.stringify(buildCompileRequest({ ...graph, pipeline_id: actualPipelineId })),
         });
 
         if (!response.ok) {
@@ -64,7 +61,7 @@ export function useGpc(options: UseGpcOptions = {}) {
           );
         }
 
-        const result: PipelineCompilationResult = await response.json();
+        const result = parseCompilationResponse(await response.json());
 
         if (!result.success) {
           throw new Error(result.warnings?.join(', ') || 'Compilation failed');

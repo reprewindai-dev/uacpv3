@@ -10,8 +10,9 @@
 import React, { useState, useCallback } from 'react';
 import { useGpc } from '../../hooks/useGpc';
 import { GpcCanvas, GpcPropertyPanel } from './GpcCanvas';
-import { useExecutionStore, usePreviewStore } from '../../stores/gpc_stores';
-import { BookOpen, Play, AlertCircle, CheckCircle, AlertTriangle } from 'lucide-react';
+import { TestPreviewModal, GitHubExportDialog } from './GpcTestDeployUI';
+import { useCanvasStore, useExecutionStore, usePreviewStore } from '../../stores/gpc_stores';
+import { BookOpen, Play, AlertCircle, CheckCircle, AlertTriangle, TestTube2, Github } from 'lucide-react';
 
 interface CompilationModal {
   isOpen: boolean;
@@ -33,6 +34,8 @@ export default function GpcPage() {
     onError: (msg) => setToast({ message: msg, type: 'error' }),
   });
 
+  const pipelineId = useCanvasStore((state) => state.pipelineId);
+  const tenantId = useCanvasStore((state) => state.tenantId);
   const isExecuting = useExecutionStore((state) => state.isRunning);
   const progress = useExecutionStore((state) => state.getRunProgress());
   const selectedPreview = usePreviewStore((state) => {
@@ -56,6 +59,9 @@ export default function GpcPage() {
     sample: [],
   });
   const [toast, setToast] = useState<{ message: string; type: string } | null>(null);
+  const [showTestModal, setShowTestModal] = useState(false);
+  const [showGitHubDialog, setShowGitHubDialog] = useState(false);
+  const [deploymentStatus, setDeploymentStatus] = useState<'untested' | 'tested'>('untested');
 
   // Compile pipeline
   const handleCompile = useCallback(async () => {
@@ -74,6 +80,12 @@ export default function GpcPage() {
   const handleExecute = useCallback(async () => {
     await execute();
   }, [execute]);
+
+  const handleApproveTest = useCallback(() => {
+    setDeploymentStatus('tested');
+    setShowTestModal(false);
+    setToast({ message: 'Test passed. Workflow generation is enabled.', type: 'success' });
+  }, []);
 
   // Generate from intent
   const handleGenerateIntent = useCallback(async () => {
@@ -165,6 +177,22 @@ export default function GpcPage() {
         >
           <Play size={16} />
           {isExecuting ? 'Running...' : 'Execute'}
+        </button>
+        <button
+          onClick={() => setShowTestModal(true)}
+          disabled={isExecuting || isLoading || !compilationModal.pythonCode}
+          className="px-4 py-2 text-sm font-medium rounded bg-orange-600 text-white hover:bg-orange-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+        >
+          <TestTube2 size={16} />
+          Test
+        </button>
+        <button
+          onClick={() => setShowGitHubDialog(true)}
+          disabled={deploymentStatus !== 'tested' || isExecuting || isLoading}
+          className="px-4 py-2 text-sm font-medium rounded bg-purple-600 text-white hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+        >
+          <Github size={16} />
+          Export Workflow
         </button>
       </div>
 
@@ -312,6 +340,8 @@ export default function GpcPage() {
           </div>
         </div>
       )}
+      <TestPreviewModal isOpen={showTestModal} onClose={() => setShowTestModal(false)} pipelineId={pipelineId} tenantId={tenantId} onApprove={handleApproveTest} />
+      <GitHubExportDialog isOpen={showGitHubDialog} onClose={() => setShowGitHubDialog(false)} pipelineId={pipelineId} tenantId={tenantId} />
     </div>
   );
 }

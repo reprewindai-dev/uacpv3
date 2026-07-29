@@ -10082,6 +10082,50 @@ async function startServer() {
     res.json(compileGpcPipeline(graph));
   });
 
+  app.post("/api/v1/gpc/export-github", withPublicRateLimit("heavy_mutation"), (req, res) => {
+    const body = ensureRecord(req.body || {}, "gpcExportGithubRequest");
+    const pipelineId = typeof body.pipeline_id === "string" ? body.pipeline_id.trim() : "";
+    const tenantId = typeof body.tenant_id === "string" && body.tenant_id.trim() ? body.tenant_id.trim() : "default";
+    const schedule = typeof body.schedule === "string" && body.schedule.trim() ? body.schedule.trim() : "0 0 * * *";
+    if (!pipelineId) {
+      res.status(400).json({ success: false, error: "pipeline_id is required" });
+      return;
+    }
+    if (!/^[0-9*/?, -]{9,32}$/.test(schedule)) {
+      res.status(400).json({ success: false, error: "schedule must be a valid cron-like expression" });
+      return;
+    }
+    const graph = resolveGpcGraph(pipelineId, tenantId);
+    const compiled = compileGpcPipeline(graph);
+    if (!compiled.success || compiled.node_count <= 0) {
+      res.status(422).json({ success: false, error: "Pipeline must compile with at least one node" });
+      return;
+    }
+    const safePipelineId = pipelineId.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const fileName = `gpc-${safePipelineId}.yml`;
+    const safeTenantId = tenantId.replace(/[^a-zA-Z0-9_-]/g, "_");
+    const workflow = [
+      `name: GPC ${safePipelineId}`,
+      "on:",
+      "  workflow_dispatch:",
+      "  schedule:",
+      `    - cron: '${schedule}'`,
+      "jobs:",
+      "  compile-and-verify:",
+      "    runs-on: ubuntu-latest",
+      "    env:",
+      "      UACP_GPC_URL: ${{ secrets.UACP_GPC_URL }}",
+      "      UACP_GPC_TOKEN: ${{ secrets.UACP_GPC_TOKEN }}",
+      "    steps:",
+      "      - name: Require UACP GPC endpoint",
+      "        run: test -n \"$UACP_GPC_URL\"",
+      "      - name: Compile governed pipeline",
+      `        run: |\n          curl --fail --silent --show-error -X POST \"$UACP_GPC_URL/api/v1/gpc/compile\" -H \"Authorization: Bearer $UACP_GPC_TOKEN\" -H \"Content-Type: application/json\" --data '${JSON.stringify({ pipeline_id: safePipelineId, tenant_id: safeTenantId })}' | tee compilation.json\n          test \"$(jq -r '.node_count' compilation.json)\" -gt 0`,
+      "      - name: Stream execution verification",
+      `        run: curl --fail --silent --show-error --no-buffer \"$UACP_GPC_URL/api/v1/gpc/execute?pipeline_id=${safePipelineId}&tenant_id=${safeTenantId}\" -H \"Authorization: Bearer $UACP_GPC_TOKEN\"`,
+    ].join("\n") + "\n";
+    res.json({ success: true, pipeline_id: pipelineId, tenant_id: tenantId, file_name: fileName, workflow });
+  });
   app.get("/api/v1/gpc/execute", withPublicRateLimit("heavy_mutation"), (req, res) => {
     const pipelineId = String(req.query.pipeline_id || "").trim();
     const tenantId = String(req.query.tenant_id || "default").trim() || "default";
