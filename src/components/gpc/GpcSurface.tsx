@@ -9,7 +9,7 @@
 
 import React, { useState, useCallback } from 'react';
 import Shell from '@/components/Shell';
-import { useGpc } from '@/lib/gpc/useGpc';
+import { useGpc } from '@/hooks/useGpc';
 import { GpcCanvas, GpcPropertyPanel } from '@/components/gpc/GpcCanvas';
 import {
   TestPreviewModal,
