@@ -15,6 +15,8 @@ import { GPCNode, GPCEdge, GPCPipelineGraph, PortType, NodeExecutionState, Previ
 
 interface CanvasStore {
   // State
+  pipelineId: string;
+  tenantId: string;
   nodes: GPCNode[];
   edges: GPCEdge[];
   selectedNodeIds: Set<string>;
@@ -50,6 +52,8 @@ interface CanvasStore {
 
 export const useCanvasStore = create<CanvasStore>()(
   subscribeWithSelector((set, get) => ({
+    pipelineId: "new_pipeline",
+    tenantId: "default",
     nodes: [],
     edges: [],
     selectedNodeIds: new Set(),
@@ -121,6 +125,8 @@ export const useCanvasStore = create<CanvasStore>()(
 
     loadGraph: (graph) =>
       set({
+        pipelineId: graph.pipeline_id || "new_pipeline",
+        tenantId: graph.tenant_id || "default",
         nodes: graph.nodes || [],
         edges: graph.edges || [],
         selectedNodeIds: new Set(),
@@ -129,8 +135,8 @@ export const useCanvasStore = create<CanvasStore>()(
     exportGraph: () => {
       const state = get();
       return {
-        pipeline_id: "new_pipeline",
-        tenant_id: "",
+        pipeline_id: state.pipelineId,
+        tenant_id: state.tenantId,
         nodes: state.nodes,
         edges: state.edges,
         schema_version: "1.0",

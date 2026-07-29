@@ -54,6 +54,7 @@ export function useGpc(options: UseGpcOptions = {}) {
           body: JSON.stringify({
             pipeline_id: actualPipelineId,
             tenant_id: graph.tenant_id,
+            graph,
           }),
         });
 
