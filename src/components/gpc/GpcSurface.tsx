@@ -8,15 +8,6 @@
 'use client';
 
 import React, { useState, useCallback } from 'react';
-import Shell from '@/components/Shell';
-import { useGpc } from '@/hooks/useGpc';
-import { GpcCanvas, GpcPropertyPanel } from '@/components/gpc/GpcCanvas';
-import {
-  TestPreviewModal,
-  GitHubExportDialog,
-} from '@/components/gpc/GpcTestDeployUI';
-import { useExecutionStore, usePreviewStore } from '@/lib/gpc/stores';
-import { ModuleHeader, Pill } from '@/components/telemetry';
 import {
   BookOpen,
   Play,
@@ -27,6 +18,33 @@ import {
   Github,
   Copy,
 } from 'lucide-react';
+import { useGpc } from '@/hooks/useGpc';
+import { GpcCanvas, GpcPropertyPanel } from '@/components/gpc/GpcCanvas';
+import {
+  TestPreviewModal,
+  GitHubExportDialog,
+} from '@/components/gpc/GpcTestDeployUI';
+import { useExecutionStore, usePreviewStore } from '@/lib/gpc/stores';
+
+const Shell = ({ children }: { children: React.ReactNode }) => <div className="flex flex-col min-h-screen bg-gray-50 p-6">{children}</div>;
+const Pill = ({ children, tone, dot }: { children: React.ReactNode; tone: string; dot?: boolean }) => (
+  <span className={`inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-${tone}-100 text-${tone}-800`}>
+    {dot && <span className={`w-2 h-2 mr-1 rounded-full bg-${tone}-500`} />}
+    {children}
+  </span>
+);
+const ModuleHeader = ({ breadcrumb, title, subtitle, pills }: any) => (
+  <div className="mb-6">
+    <div className="text-xs text-gray-500 mb-1">{breadcrumb}</div>
+    <div className="flex items-center justify-between">
+      <div>
+        <h1 className="text-2xl font-semibold text-gray-900">{title}</h1>
+        <p className="text-sm text-gray-600">{subtitle}</p>
+      </div>
+      <div className="flex gap-2">{pills}</div>
+    </div>
+  </div>
+);
 
 interface CompilationModal {
   isOpen: boolean;
