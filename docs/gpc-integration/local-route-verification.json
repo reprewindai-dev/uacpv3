@@ -1,0 +1,171 @@
+{
+  "components": {
+    "request": "GET /api/v1/gpc/components",
+    "status": 200,
+    "body": "[{\"node_type\":\"input.intent\",\"display_name\":\"Intent Input\",\"description\":\"Seeds a pipeline from operator intent.\",\"category\":\"input\",\"output_ports\":[{\"id\":\"out\",\"port_type\":\"documents\",\"label\":\"Out\"}]},{\"node_type\":\"transform.normalize\",\"display_name\":\"Normalize\",\"description\":\"Cleans and structures intent text.\",\"category\":\"transform\",\"input_ports\":[{\"id\":\"in\",\"port_type\":\"documents\",\"label\":\"In\",\"required\":true}],\"output_ports\":[{\"id\":\"out\",\"port_type\":\"documents\",\"label\":\"Out\"}]},{\"node_type\":\"output.result\",\"display_name\":\"Result Output\",\"description\":\"Emits the compiled result.\",\"category\":\"output\",\"input_ports\":[{\"id\":\"in\",\"port_type\":\"documents\",\"label\":\"In\",\"required\":true}]}]"
+  },
+  "generate": {
+    "request": "{\r\n  \"tenant_id\": \"tenant_verify\",\r\n  \"data_residency_region\": \"ca-central-1\",\r\n  \"user_intent\": \"Load sales data and produce a governed result\"\r\n}",
+    "status": 200,
+    "body": {
+      "success": true,
+      "pipeline_graph": {
+        "pipeline_id": "gpc_9283448a0cc9",
+        "tenant_id": "tenant_verify",
+        "name": "Generated pipeline: Load sales data and produce a governed result",
+        "description": "Load sales data and produce a governed result",
+        "schema_version": "1.0",
+        "prompt_version": "1.0",
+        "created_at": "2026-07-29T16:34:45.092Z",
+        "updated_at": "2026-07-29T16:34:45.092Z",
+        "metadata": {
+          "source": "uacp-gpc",
+          "intent": "Load sales data and produce a governed result",
+          "available_components": [],
+          "intent_tokens": [
+            "load",
+            "sales",
+            "data",
+            "and",
+            "produce",
+            "governed",
+            "result"
+          ]
+        },
+        "data_residency_region": "ca-central-1",
+        "nodes": [
+          {
+            "id": "input",
+            "node_type": "input.intent",
+            "label": "Intent Input",
+            "config": {
+              "intent": "Load sales data and produce a governed result"
+            },
+            "input_ports": [],
+            "output_ports": [
+              {
+                "id": "out",
+                "port_type": "documents",
+                "label": "Out"
+              }
+            ],
+            "position": {
+              "x": 80,
+              "y": 120
+            }
+          },
+          {
+            "id": "normalize",
+            "node_type": "transform.normalize",
+            "label": "Normalize",
+            "config": {
+              "intent": "Load sales data and produce a governed result"
+            },
+            "input_ports": [
+              {
+                "id": "in",
+                "port_type": "documents",
+                "label": "In",
+                "required": true
+              }
+            ],
+            "output_ports": [
+              {
+                "id": "out",
+                "port_type": "documents",
+                "label": "Out"
+              }
+            ],
+            "position": {
+              "x": 340,
+              "y": 120
+            }
+          },
+          {
+            "id": "result",
+            "node_type": "output.result",
+            "label": "Result Output",
+            "config": {
+              "intent": "Load sales data and produce a governed result"
+            },
+            "input_ports": [
+              {
+                "id": "in",
+                "port_type": "documents",
+                "label": "In",
+                "required": true
+              }
+            ],
+            "output_ports": [],
+            "position": {
+              "x": 600,
+              "y": 120
+            }
+          }
+        ],
+        "edges": [
+          {
+            "id": "edge_input_normalize",
+            "source_node_id": "input",
+            "source_port_id": "out",
+            "target_node_id": "normalize",
+            "target_port_id": "in"
+          },
+          {
+            "id": "edge_normalize_result",
+            "source_node_id": "normalize",
+            "source_port_id": "out",
+            "target_node_id": "result",
+            "target_port_id": "in"
+          }
+        ]
+      },
+      "reasoning": "Deterministic pipeline generated from operator intent.",
+      "retry_count": 0,
+      "confidence_score": 0.84
+    }
+  },
+  "compile": {
+    "request": "{\r\n  \"tenant_id\": \"tenant_verify\",\r\n  \"graph\": {\r\n    \"pipeline_id\": \"gpc_9283448a0cc9\",\r\n    \"tenant_id\": \"tenant_verify\",\r\n    \"name\": \"Generated pipeline: Load sales data and produce a governed result\",\r\n    \"description\": \"Load sales data and produce a governed result\",\r\n    \"schema_version\": \"1.0\",\r\n    \"prompt_version\": \"1.0\",\r\n    \"created_at\": \"2026-07-29T16:34:45.092Z\",\r\n    \"updated_at\": \"2026-07-29T16:34:45.092Z\",\r\n    \"metadata\": {\r\n      \"source\": \"uacp-gpc\",\r\n      \"intent\": \"Load sales data and produce a governed result\",\r\n      \"available_components\": [],\r\n      \"intent_tokens\": [\r\n        \"load\",\r\n        \"sales\",\r\n        \"data\",\r\n        \"and\",\r\n        \"produce\",\r\n        \"governed\",\r\n        \"result\"\r\n      ]\r\n    },\r\n    \"data_residency_region\": \"ca-central-1\",\r\n    \"nodes\": [\r\n      {\r\n        \"id\": \"input\",\r\n        \"node_type\": \"input.intent\",\r\n        \"label\": \"Intent Input\",\r\n        \"config\": {\r\n          \"intent\": \"Load sales data and produce a governed result\"\r\n        },\r\n        \"input_ports\": [],\r\n        \"output_ports\": [\r\n          {\r\n            \"id\": \"out\",\r\n            \"port_type\": \"documents\",\r\n            \"label\": \"Out\"\r\n          }\r\n        ],\r\n        \"position\": {\r\n          \"x\": 80,\r\n          \"y\": 120\r\n        }\r\n      },\r\n      {\r\n        \"id\": \"normalize\",\r\n        \"node_type\": \"transform.normalize\",\r\n        \"label\": \"Normalize\",\r\n        \"config\": {\r\n          \"intent\": \"Load sales data and produce a governed result\"\r\n        },\r\n        \"input_ports\": [\r\n          {\r\n            \"id\": \"in\",\r\n            \"port_type\": \"documents\",\r\n            \"label\": \"In\",\r\n            \"required\": true\r\n          }\r\n        ],\r\n        \"output_ports\": [\r\n          {\r\n            \"id\": \"out\",\r\n            \"port_type\": \"documents\",\r\n            \"label\": \"Out\"\r\n          }\r\n        ],\r\n        \"position\": {\r\n          \"x\": 340,\r\n          \"y\": 120\r\n        }\r\n      },\r\n      {\r\n        \"id\": \"result\",\r\n        \"node_type\": \"output.result\",\r\n        \"label\": \"Result Output\",\r\n        \"config\": {\r\n          \"intent\": \"Load sales data and produce a governed result\"\r\n        },\r\n        \"input_ports\": [\r\n          {\r\n            \"id\": \"in\",\r\n            \"port_type\": \"documents\",\r\n            \"label\": \"In\",\r\n            \"required\": true\r\n          }\r\n        ],\r\n        \"output_ports\": [],\r\n        \"position\": {\r\n          \"x\": 600,\r\n          \"y\": 120\r\n        }\r\n      }\r\n    ],\r\n    \"edges\": [\r\n      {\r\n        \"id\": \"edge_input_normalize\",\r\n        \"source_node_id\": \"input\",\r\n        \"source_port_id\": \"out\",\r\n        \"target_node_id\": \"normalize\",\r\n        \"target_port_id\": \"in\"\r\n      },\r\n      {\r\n        \"id\": \"edge_normalize_result\",\r\n        \"source_node_id\": \"normalize\",\r\n        \"source_port_id\": \"out\",\r\n        \"target_node_id\": \"result\",\r\n        \"target_port_id\": \"in\"\r\n      }\r\n    ]\r\n  },\r\n  \"pipeline_id\": \"gpc_9283448a0cc9\"\r\n}",
+    "status": 200,
+    "body": {
+      "success": true,
+      "python_code": "def run_pipeline(context):\n    # pipeline_id: gpc_9283448a0cc9\n    # tenant_id: tenant_verify\n    # node input: input.intent\n    context['input'] = {'status': 'complete', 'node_type': 'input.intent'}\n    # node normalize: transform.normalize\n    context['normalize'] = {'status': 'complete', 'node_type': 'transform.normalize'}\n    # node result: output.result\n    context['result'] = {'status': 'complete', 'node_type': 'output.result'}\n    return context",
+      "node_count": 3,
+      "execution_order": [
+        "input",
+        "normalize",
+        "result"
+      ],
+      "parallel_levels": [
+        [
+          "input"
+        ],
+        [
+          "normalize"
+        ],
+        [
+          "result"
+        ]
+      ],
+      "compilation_timestamp": "2026-07-29T16:34:47.183Z",
+      "warnings": []
+    }
+  },
+  "execute": {
+    "request": "http://localhost:3000/api/v1/gpc/execute?pipeline_id=gpc_9283448a0cc9&tenant_id=tenant_verify",
+    "status": 200,
+    "body": "data: {\"event\":\"start\",\"message\":\"Execution started.\"}\n\ndata: {\"event\":\"node_start\",\"node_id\":\"input\",\"index\":0}\n\ndata: {\"event\":\"node_complete\",\"node_id\":\"input\",\"index\":0,\"success\":true,\"preview\":{\"node_id\":\"input\",\"rows\":1,\"columns\":[\"node_id\",\"node_type\",\"status\"],\"sample\":[[\"input\",\"input.intent\",\"complete\"]],\"timestamp\":1785342889345}}\n\ndata: {\"event\":\"node_start\",\"node_id\":\"normalize\",\"index\":1}\n\ndata: {\"event\":\"node_complete\",\"node_id\":\"normalize\",\"index\":1,\"success\":true,\"preview\":{\"node_id\":\"normalize\",\"rows\":1,\"columns\":[\"node_id\",\"node_type\",\"status\"],\"sample\":[[\"normalize\",\"transform.normalize\",\"complete\"]],\"timestamp\":1785342889483}}\n\ndata: {\"event\":\"node_start\",\"node_id\":\"result\",\"index\":2}\n\ndata: {\"event\":\"node_complete\",\"node_id\":\"result\",\"index\":2,\"success\":true,\"preview\":{\"node_id\":\"result\",\"rows\":1,\"columns\":[\"node_id\",\"node_type\",\"status\"],\"sample\":[[\"result\",\"output.result\",\"complete\"]],\"timestamp\":1785342889618}}\n\ndata: {\"event\":\"complete\",\"success\":true,\"message\":\"Execution completed.\"}\n\n"
+  },
+  "export": {
+    "request": "{\r\n  \"tenant_id\": \"tenant_verify\",\r\n  \"schedule\": \"0 0 * * *\",\r\n  \"pipeline_id\": \"gpc_9283448a0cc9\"\r\n}",
+    "status": 200,
+    "body": {
+      "success": true,
+      "pipeline_id": "gpc_9283448a0cc9",
+      "tenant_id": "tenant_verify",
+      "file_name": "gpc-gpc_9283448a0cc9.yml",
+      "workflow": "name: GPC gpc_9283448a0cc9\non:\n  workflow_dispatch:\n  schedule:\n    - cron: '0 0 * * *'\njobs:\n  compile-and-verify:\n    runs-on: ubuntu-latest\n    env:\n      UACP_GPC_URL: ${{ secrets.UACP_GPC_URL }}\n      UACP_GPC_TOKEN: ${{ secrets.UACP_GPC_TOKEN }}\n    steps:\n      - name: Require UACP GPC endpoint\n        run: test -n \"$UACP_GPC_URL\"\n      - name: Compile governed pipeline\n        run: |\n          curl --fail --silent --show-error -X POST \"$UACP_GPC_URL/api/v1/gpc/compile\" -H \"Authorization: Bearer $UACP_GPC_TOKEN\" -H \"Content-Type: application/json\" --data '{\"pipeline_id\":\"gpc_9283448a0cc9\",\"tenant_id\":\"tenant_verify\"}' | tee compilation.json\n          test \"$(jq -r '.node_count' compilation.json)\" -gt 0\n      - name: Stream execution verification\n        run: curl --fail --silent --show-error --no-buffer \"$UACP_GPC_URL/api/v1/gpc/execute?pipeline_id=gpc_9283448a0cc9&tenant_id=tenant_verify\" -H \"Authorization: Bearer $UACP_GPC_TOKEN\"\n"
+    }
+  }
+}

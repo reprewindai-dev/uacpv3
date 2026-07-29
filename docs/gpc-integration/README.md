@@ -22,8 +22,24 @@ See [package-merge-matrix.md](./package-merge-matrix.md) and [backend-deferred-m
 
 ## Validation
 
-- `npm run test:gpc` — 4 passed.
+- `npm run test:gpc` — 5 passed.
 - `npm run lint` — passed.
 - `npm run build` — passed after elevated esbuild execution; Vite emitted only its existing chunk-size warning.
 
 This is not a claim that the full cross-repository backend package is complete.
+
+## Local route verification
+
+On 2026-07-29, the local UACP v3 server was exercised with one generated graph. The exact request payloads and response bodies are recorded in [local-route-verification.json](./local-route-verification.json).
+
+- `GET /api/v1/gpc/components` — HTTP 200.
+- `POST /api/v1/gpc/generate` — HTTP 200; returned `pipeline_id=gpc_9283448a0cc9` and `tenant_id=tenant_verify`.
+- `POST /api/v1/gpc/compile` — HTTP 200; active graph included in request; returned `node_count=3`, valid generated Python, and execution order `input → normalize → result`.
+- `GET /api/v1/gpc/execute` — HTTP 200; streamed `start`, `node_start`, `node_complete` previews for all three nodes, and `complete`.
+- `POST /api/v1/gpc/export-github` — HTTP 200; returned `gpc-gpc_9283448a0cc9.yml` with a real curl-based compile/execute workflow artifact.
+
+This verifies the UACP v3 local route contract and frontend wiring target. It does not verify the deferred Python backend package or a browser-driven production deployment.
+
+## Deferred backend boundary
+
+The local UACP route lifecycle works with the current TypeScript server. The Python package remains deferred, so Python-side builder manufacturing, queue/cache/orchestrator execution, evidence-pack persistence, and governed backend deployment are not verified here. No full GPC integration claim is made.
