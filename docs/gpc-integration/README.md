@@ -19,7 +19,7 @@ The raw ZIP is intentionally not committed. The package inventory and dispositio
 
 The canonical FastAPI router is mounted from `backend.apps.gpc.routes` in `veklom-byos-backend`. Its active graph compile and governed execute contracts preserve authenticated workspace tenant identity and pipeline identity. The unreferenced legacy mock `backend/apps/gpc/gpc_routes.py` module was removed.
 
-The current backend intentionally returns explicit `501 Not Implemented` for natural-language generation, audit storage, statistics storage, and GitHub export because those services are not configured in the canonical route. No mock success is claimed.
+The current backend uses the existing tenant-aware governed inference provider for natural-language generation and validates the returned graph through Pydantic and the compiler. Audit storage, statistics storage, and GitHub export remain unavailable; no mock success is claimed.
 
 ## Residual package work
 
@@ -44,7 +44,7 @@ Current canonical backend route status:
 - `GET /api/v1/gpc/components` — supported.
 - `POST /api/v1/gpc/compile` — supported for a non-empty active graph with matching authenticated tenant and pipeline identity.
 - `POST /api/v1/gpc/execute` — supported through the governed worker and SSE lifecycle.
-- `POST /api/v1/gpc/generate` — explicit `501` unavailable; no provider is configured.
+- `POST /api/v1/gpc/generate` — supported through the existing governed inference provider; provider or invalid-output failures return explicit errors.
 - `GET /api/v1/gpc/audit` and `/stats` — explicit `501` unavailable; storage is not configured.
 - GitHub workflow export — unavailable; the frontend does not send an unsupported request.
 
