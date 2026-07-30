@@ -24,7 +24,7 @@ import {
   TestPreviewModal,
   GitHubExportDialog,
 } from '@/components/gpc/GpcTestDeployUI';
-import { useExecutionStore, usePreviewStore } from '@/lib/gpc/stores';
+import { useCanvasStore, useExecutionStore, usePreviewStore } from '../../stores/gpc_stores';
 
 const Shell = ({ children }: { children: React.ReactNode }) => <div className="flex flex-col min-h-screen bg-gray-50 p-6">{children}</div>;
 const Pill = ({ children, tone, dot }: { children: React.ReactNode; tone: string; dot?: boolean }) => (
@@ -59,6 +59,7 @@ export default function GpcPage() {
     onError: (msg) => setToast({ message: msg, type: 'error' }),
   });
 
+  const pipelineId = useCanvasStore((state) => state.pipelineId);
   const isExecuting = useExecutionStore((state) => state.isRunning);
   const progress = useExecutionStore((state) => state.getRunProgress());
   const selectedPreview = usePreviewStore((state) => {
@@ -434,3 +435,4 @@ export default function GpcPage() {
     </Shell>
   );
 }
+
