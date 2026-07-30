@@ -60,6 +60,7 @@ export default function GpcPage() {
   });
 
   const pipelineId = useCanvasStore((state) => state.pipelineId);
+  const activeGraph = useCanvasStore((state) => state.exportGraph());
   const isExecuting = useExecutionStore((state) => state.isRunning);
   const progress = useExecutionStore((state) => state.getRunProgress());
   const selectedPreview = usePreviewStore((state) => {
@@ -421,7 +422,8 @@ export default function GpcPage() {
       <TestPreviewModal
         isOpen={showTestModal}
         onClose={() => setShowTestModal(false)}
-        pipelineId="pipeline_123"
+        pipelineId={pipelineId}
+        graph={activeGraph}
         onApprove={handleApproveTest}
       />
 
@@ -429,7 +431,7 @@ export default function GpcPage() {
       <GitHubExportDialog
         isOpen={showGitHubDialog}
         onClose={() => setShowGitHubDialog(false)}
-        pipelineId="pipeline_123"
+        pipelineId={pipelineId}
         pipelineName={pipelineName}
       />
     </Shell>

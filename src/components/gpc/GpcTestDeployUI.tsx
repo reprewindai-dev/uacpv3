@@ -18,7 +18,7 @@ import {
   Loader,
   X,
 } from 'lucide-react';
-import { PreviewData, ExecutionEvent } from '../../types/gpc';
+import { GPCPipelineGraph, PreviewData, ExecutionEvent } from '../../types/gpc';
 
 // ============================================================================
 // TEST PREVIEW PANEL
@@ -28,11 +28,12 @@ interface TestPreviewModalProps {
   isOpen: boolean;
   onClose: () => void;
   pipelineId: string;
+  graph: GPCPipelineGraph;
   onApprove?: () => void;
 }
 
 export const TestPreviewModal: React.FC<TestPreviewModalProps> = React.memo(
-  ({ isOpen, onClose, pipelineId, onApprove }) => {
+  ({ isOpen, onClose, pipelineId, graph, onApprove }) => {
     const [testMode, setTestMode] = useState<'dry_run' | 'sample' | 'full'>(
       'sample'
     );
@@ -58,63 +59,49 @@ export const TestPreviewModal: React.FC<TestPreviewModalProps> = React.memo(
       setCanDeploy(false);
 
       try {
-        const token = localStorage.getItem('token') || '';
-        const eventSource = new EventSource(
-          `/api/v1/gpc/test?pipeline_id=${pipelineId}&mode=${testMode}`,
-          {
-            withCredentials: true,
-          }
-        );
+        const response = await fetch('/api/v1/gpc/execute', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${localStorage.getItem('token') || ''}`,
+          },
+          body: JSON.stringify({
+            pipeline_id: pipelineId,
+            tenant_id: graph.tenant_id,
+            graph: { ...graph, pipeline_id: pipelineId },
+          }),
+        });
+        if (!response.ok) {
+          throw new Error(`GPC test failed: ${response.status} ${response.statusText}`);
+        }
 
-        eventSource.addEventListener('message', (event) => {
-          const data: ExecutionEvent = JSON.parse(event.data);
-
+        const stream = await response.text();
+        for (const frame of stream.split('\n\n')) {
+          const dataLine = frame.split('\n').find((line) => line.startsWith('data: '));
+          if (!dataLine) continue;
+          const data: ExecutionEvent = JSON.parse(dataLine.slice(6));
           if (data.event === 'node_complete' && data.preview) {
             setResults((prev) => [
               ...prev,
               {
                 nodeId: data.node_id || 'unknown',
                 nodeType: 'Transform',
-                status: 'success',
+                status: data.success === false ? 'failure' : 'success',
                 rows: data.preview.rows,
                 columns: data.preview.columns,
                 sample: data.preview.sample,
+                error: data.success === false ? data.error || data.message : undefined,
               },
             ]);
           } else if (data.event === 'complete') {
-            setTestRunId(data.event); // Mock
-            setCanDeploy(data.success === true);
-            eventSource.close();
-          } else if (data.error) {
-            setResults((prev) => [
-              ...prev,
-              {
-                nodeId: 'error',
-                nodeType: 'System',
-                status: 'failure',
-                rows: 0,
-                columns: [],
-                sample: [],
-                error: data.error,
-              },
-            ]);
-            eventSource.close();
+            if (data.success !== true) throw new Error(data.error || data.message || 'GPC test failed');
+            setTestRunId(pipelineId);
+            setCanDeploy(true);
+          } else if (data.event === 'error' || data.success === false) {
+            throw new Error(data.error || data.message || 'GPC test failed');
           }
-        });
-
-        eventSource.addEventListener('error', () => {
-          eventSource.close();
-          setIsRunning(false);
-        });
-
-        // Timeout after 60s
-        setTimeout(() => {
-          if (isRunning) {
-            eventSource.close();
-            setIsRunning(false);
-          }
-        }, 60000);
-      } catch (err) {
+        }
+        setIsRunning(false);      } catch (err) {
         console.error('Test run failed:', err);
         setIsRunning(false);
       }
