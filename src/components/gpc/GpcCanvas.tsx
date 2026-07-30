@@ -33,8 +33,8 @@ import {
   useExecutionStore,
   usePreviewStore,
   useSelectedNodeIds,
-} from '@/lib/gpc/stores';
-import { GPCNode, GPCEdge } from '@/types/gpc';
+} from '../../stores/gpc_stores';
+import { GPCNode, GPCEdge } from '../../types/gpc';
 
 // ============================================================================
 // CUSTOM NODE COMPONENT (Memoized)

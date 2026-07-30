@@ -7,14 +7,15 @@
  */
 
 import { useCallback, useState } from 'react';
-import { useCanvasStore, useExecutionStore, usePreviewStore } from '@/lib/gpc/stores';
+import { useCanvasStore, useExecutionStore, usePreviewStore } from '../stores/gpc_stores';
 import {
   GPCPipelineGraph,
   NLToGraphRequest,
   NLToGraphResult,
   PipelineCompilationResult,
   ExecutionEvent,
-} from '@/types/gpc';
+} from '../types/gpc';
+import { buildCompileRequest, parseCompilationResponse } from '../gpc/contracts';
 
 interface UseGpcOptions {
   baseUrl?: string;
@@ -51,10 +52,7 @@ export function useGpc(options: UseGpcOptions = {}) {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${typeof window !== 'undefined' ? localStorage.getItem('token') || '' : ''}`,
           },
-          body: JSON.stringify({
-            pipeline_id: actualPipelineId,
-            tenant_id: graph.tenant_id,
-          }),
+          body: JSON.stringify(buildCompileRequest({ ...graph, pipeline_id: actualPipelineId })),
         });
 
         if (!response.ok) {
@@ -63,11 +61,7 @@ export function useGpc(options: UseGpcOptions = {}) {
           );
         }
 
-        const result: PipelineCompilationResult = await response.json();
-
-        if (!result.success) {
-          throw new Error(result.warnings?.join(', ') || 'Compilation failed');
-        }
+        const result = parseCompilationResponse(await response.json());
 
         // Store compilation result in session (optional: show in modal)
         sessionStorage.setItem('gpc_last_compilation', JSON.stringify(result));
@@ -118,7 +112,7 @@ export function useGpc(options: UseGpcOptions = {}) {
 
         // Open SSE connection for streaming execution
         const eventSource = new EventSource(
-          `${baseUrl}/execute?pipeline_id=${actualPipelineId}`,
+          `${baseUrl}/execute?pipeline_id=${encodeURIComponent(actualPipelineId)}&tenant_id=${encodeURIComponent(graph.tenant_id)}`,
           {
             withCredentials: true,
           }
