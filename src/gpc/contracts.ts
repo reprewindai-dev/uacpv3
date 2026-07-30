@@ -14,6 +14,7 @@ export type GpcCompileRequest = {
 export function buildCompileRequest(graph: GPCPipelineGraph): GpcCompileRequest {
   if (!graph.pipeline_id.trim()) throw new Error("pipeline_id is required");
   if (!graph.tenant_id.trim()) throw new Error("tenant_id is required");
+  if (graph.tenant_id === "default") throw new Error("authenticated tenant_id is required");
   if (graph.nodes.length === 0) throw new Error("graph must contain at least one node");
   return { pipeline_id: graph.pipeline_id, tenant_id: graph.tenant_id, graph };
 }

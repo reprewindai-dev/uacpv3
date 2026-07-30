@@ -110,70 +110,53 @@ export function useGpc(options: UseGpcOptions = {}) {
           compilationResult.parallel_levels
         );
 
-        // Open SSE connection for streaming execution
-        const eventSource = new EventSource(
-          `${baseUrl}/execute?pipeline_id=${encodeURIComponent(actualPipelineId)}&tenant_id=${encodeURIComponent(graph.tenant_id)}`,
-          {
-            withCredentials: true,
-          }
-        );
-
-        eventSource.addEventListener('message', (event) => {
-          try {
-            const data: ExecutionEvent = JSON.parse(event.data);
-
-            switch (data.event) {
-              case 'start':
-                executionStore.startExecution(
-                  actualPipelineId,
-                  compilationResult.execution_order,
-                  compilationResult.parallel_levels
-                );
-                break;
-
-              case 'node_start':
-                if (data.node_id) {
-                  executionStore.setCurrentNode(data.node_id);
-                  executionStore.updateNodeStatus(data.node_id, {
-                    status: 'running',
-                    progress: (data.index || 0) * 20,
-                  });
-                }
-                break;
-
-              case 'node_complete':
-                if (data.node_id) {
-                  executionStore.updateNodeStatus(data.node_id, {
-                    status: 'success',
-                    progress: 100,
-                  });
-                  if (data.preview) {
-                    previewStore.setPreview(data.node_id, data.preview);
-                  }
-                }
-                break;
-
-              case 'complete':
-                executionStore.completeExecution();
-                options.onSuccess?.('Pipeline executed successfully');
-                eventSource.close();
-                break;
-
-              case 'error':
-                throw new Error(data.error || data.message || 'Execution error');
-            }
-          } catch (err) {
-            console.error('Error parsing SSE event:', err);
-          }
+        const response = await fetch(`${baseUrl}/execute`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${typeof window !== 'undefined' ? localStorage.getItem('token') || '' : ''}`,
+          },
+          body: JSON.stringify({
+            pipeline_id: actualPipelineId,
+            tenant_id: graph.tenant_id,
+            graph: { ...graph, pipeline_id: actualPipelineId },
+          }),
         });
 
-        eventSource.addEventListener('error', () => {
-          const errorMsg = 'Execution connection lost';
-          setError(errorMsg);
-          options.onError?.(errorMsg);
-          executionStore.failExecution(errorMsg);
-          eventSource.close();
-        });
+        if (!response.ok) {
+          throw new Error(`Execution failed: ${response.status} ${response.statusText}`);
+        }
+
+        const stream = await response.text();
+        for (const frame of stream.split('\n\n')) {
+          const dataLine = frame.split('\n').find((line) => line.startsWith('data: '));
+          if (!dataLine) continue;
+          const data: ExecutionEvent = JSON.parse(dataLine.slice(6));
+          switch (data.event) {
+            case 'start':
+              executionStore.startExecution(actualPipelineId, compilationResult.execution_order, compilationResult.parallel_levels);
+              break;
+            case 'node_start':
+              if (data.node_id) {
+                executionStore.setCurrentNode(data.node_id);
+                executionStore.updateNodeStatus(data.node_id, { status: 'running', progress: (data.index || 0) * 20 });
+              }
+              break;
+            case 'node_complete':
+              if (data.node_id) {
+                executionStore.updateNodeStatus(data.node_id, { status: 'success', progress: 100 });
+                if (data.preview) previewStore.setPreview(data.node_id, data.preview);
+              }
+              break;
+            case 'complete':
+              if (data.success !== true) throw new Error(data.error || data.message || 'Execution failed');
+              executionStore.completeExecution();
+              options.onSuccess?.('Pipeline executed successfully');
+              break;
+            case 'error':
+              throw new Error(data.error || data.message || 'Execution error');
+          }
+        }
       } catch (err) {
         const errorMsg = err instanceof Error ? err.message : 'Execution failed';
         setError(errorMsg);
@@ -207,7 +190,7 @@ export function useGpc(options: UseGpcOptions = {}) {
             Authorization: `Bearer ${typeof window !== 'undefined' ? localStorage.getItem('token') || '' : ''}`,
           },
           body: JSON.stringify({
-            tenant_id: 'default',
+            tenant_id: canvasStore.exportGraph().tenant_id,
             user_intent: intent,
             data_residency_region: dataResidencyRegion,
           } as NLToGraphRequest),
@@ -272,7 +255,7 @@ export function useGpc(options: UseGpcOptions = {}) {
   const reset = useCallback(() => {
     canvasStore.loadGraph({
       pipeline_id: `pipeline_${Date.now()}`,
-      tenant_id: 'default',
+      tenant_id: '',
       nodes: [],
       edges: [],
     });

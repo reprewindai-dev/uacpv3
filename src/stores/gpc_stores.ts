@@ -53,7 +53,7 @@ interface CanvasStore {
 export const useCanvasStore = create<CanvasStore>()(
   subscribeWithSelector((set, get) => ({
     pipelineId: "new_pipeline",
-    tenantId: "default",
+    tenantId: "",
     nodes: [],
     edges: [],
     selectedNodeIds: new Set(),
@@ -126,7 +126,7 @@ export const useCanvasStore = create<CanvasStore>()(
     loadGraph: (graph) =>
       set({
         pipelineId: graph.pipeline_id || "new_pipeline",
-        tenantId: graph.tenant_id || "default",
+        tenantId: graph.tenant_id || "",
         nodes: graph.nodes || [],
         edges: graph.edges || [],
         selectedNodeIds: new Set(),
