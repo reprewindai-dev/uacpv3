@@ -34,9 +34,6 @@ interface TestPreviewModalProps {
 
 export const TestPreviewModal: React.FC<TestPreviewModalProps> = React.memo(
   ({ isOpen, onClose, pipelineId, graph, onApprove }) => {
-    const [testMode, setTestMode] = useState<'dry_run' | 'sample' | 'full'>(
-      'sample'
-    );
     const [isRunning, setIsRunning] = useState(false);
     const [results, setResults] = useState<
       Array<{
@@ -105,7 +102,7 @@ export const TestPreviewModal: React.FC<TestPreviewModalProps> = React.memo(
         console.error('Test run failed:', err);
         setIsRunning(false);
       }
-    }, [pipelineId, testMode, isRunning]);
+    }, [pipelineId, graph]);
 
     if (!isOpen) return null;
 
@@ -117,7 +114,7 @@ export const TestPreviewModal: React.FC<TestPreviewModalProps> = React.memo(
             <div>
               <h2 className="text-2xl font-bold text-gray-900">Test Pipeline</h2>
               <p className="text-sm text-gray-500 mt-1">
-                Run on sample data to verify correctness before deployment
+                Run the active graph through the governed GPC execution path
               </p>
             </div>
             <button
@@ -128,37 +125,14 @@ export const TestPreviewModal: React.FC<TestPreviewModalProps> = React.memo(
             </button>
           </div>
 
-          {/* Mode Selection */}
+          {/* Execution contract */}
           <div className="p-6 border-b border-gray-200">
             <label className="block text-sm font-medium text-gray-700 mb-3">
-              Test Mode
+              Execution Mode
             </label>
-            <div className="flex gap-3">
-              {(['dry_run', 'sample', 'full'] as const).map((mode) => (
-                <label
-                  key={mode}
-                  className="flex items-center gap-2 cursor-pointer"
-                >
-                  <input
-                    type="radio"
-                    value={mode}
-                    checked={testMode === mode}
-                    onChange={(e) =>
-                      setTestMode(e.target.value as typeof mode)
-                    }
-                    className="w-4 h-4"
-                    disabled={isRunning}
-                  />
-                  <span className="text-sm font-medium text-gray-700">
-                    {mode === 'dry_run'
-                      ? '🔍 Dry Run (compile only)'
-                      : mode === 'sample'
-                      ? '📊 Sample (first 100 rows)'
-                      : '⚡ Full (complete dataset)'}
-                  </span>
-                </label>
-              ))}
-            </div>
+            <p className="text-sm font-medium text-gray-700">
+              Governed execution of the active graph
+            </p>
           </div>
 
           {/* Results */}
@@ -167,7 +141,7 @@ export const TestPreviewModal: React.FC<TestPreviewModalProps> = React.memo(
               <div className="text-center py-12">
                 <Play size={32} className="mx-auto text-gray-300 mb-3" />
                 <p className="text-gray-500">
-                  Click "Start Test" to run pipeline on sample data
+                  Click "Start Test" to run the active graph
                 </p>
               </div>
             )}
@@ -281,39 +255,12 @@ export const GitHubExportDialog: React.FC<GitHubExportDialogProps> = React.memo(
     const [isExporting, setIsExporting] = useState(false);
     const [exportResult, setExportResult] = useState<any>(null);
 
-    const handleExport = useCallback(async () => {
-      if (!repoOwner || !repoName || !githubToken) {
-        alert('Please fill in all fields');
-        return;
-      }
-
-      setIsExporting(true);
-
-      try {
-        const response = await fetch('/api/v1/gpc/export-github', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${localStorage.getItem('token') || ''}`,
-          },
-          body: JSON.stringify({
-            pipeline_id: pipelineId,
-            repo_owner: repoOwner,
-            repo_name: repoName,
-            github_token: githubToken,
-            schedule,
-          }),
-        });
-
-        const result = await response.json();
-        setExportResult(result);
-      } catch (err) {
-        console.error('Export failed:', err);
-        setExportResult({ status: 'failed', error: String(err) });
-      } finally {
-        setIsExporting(false);
-      }
-    }, [pipelineId, repoOwner, repoName, githubToken, schedule]);
+    const handleExport = useCallback(() => {
+      setExportResult({
+        status: 'failed',
+        error: 'GitHub workflow export is unavailable in the canonical GPC backend.',
+      });
+    }, []);
 
     if (!isOpen) return null;
 
@@ -339,8 +286,7 @@ export const GitHubExportDialog: React.FC<GitHubExportDialogProps> = React.memo(
           {!exportResult ? (
             <div className="p-6 space-y-4">
               <p className="text-sm text-gray-600">
-                Automatically deploy your pipeline on every commit to main
-                branch with approval gates.
+                GitHub workflow export is not available in the canonical GPC backend. No token or repository data will be sent.
               </p>
 
               <div>
@@ -430,20 +376,10 @@ export const GitHubExportDialog: React.FC<GitHubExportDialogProps> = React.memo(
                 </button>
                 <button
                   onClick={handleExport}
-                  disabled={isExporting || !repoOwner || !repoName}
-                  className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center gap-2"
+                  className="px-4 py-2 text-sm font-medium text-white bg-gray-500 rounded-lg hover:bg-gray-600 flex items-center gap-2"
                 >
-                  {isExporting ? (
-                    <>
-                      <Loader size={16} className="animate-spin" />
-                      Exporting...
-                    </>
-                  ) : (
-                    <>
-                      <Github size={16} />
-                      Export Workflow
-                    </>
-                  )}
+                  <Github size={16} />
+                  Show unavailable status
                 </button>
               </div>
             </div>
