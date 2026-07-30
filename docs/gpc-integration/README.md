@@ -1,22 +1,29 @@
 # UACP v3 GPC package integration
 
-Status: frontend integration implemented in UACP v3; backend package integration deferred because this session is writable only in `C:\Users\antho\.windsurf\uacpv3`.
+Status: direct GPC frontend and canonical backend route integration is published. The broader 40-file package remains only partially integrated; this is not a full package completion claim.
 
-This folder records the complete 40-file package audit. The raw ZIP is intentionally not committed.
+The raw ZIP is intentionally not committed. The package inventory and disposition are recorded in the merge matrix and residual backend manifest.
 
 ## Completed in UACP v3
 
 - Preserved `pipeline_id` and `tenant_id` through canvas load/export.
-- Sent the active graph in compile requests.
+- Sent the active graph in compile and execute requests.
 - Added strict compilation response validation; empty or malformed results fail honestly.
-- Added `src/components/gpc/GpcTestDeployUI.tsx` with streamed test preview, explicit failure state, approval gate, and downloadable workflow artifact.
-- Added the UACP-only `POST /api/v1/gpc/export-github` artifact route. It does not write to GitHub or claim external deployment.
-- Preserved the existing ReactFlow canvas, compiler result modal, execution progress, intent generation, and preview panel.
+- Added governed execution streaming with explicit failure handling and approval state.
+- Removed misleading dry-run/sample/full labels that were not represented by the backend contract.
+- Disabled the unsupported GitHub workflow export request; the UI fails closed without sending tokens.
+- Preserved the existing ReactFlow canvas, compiler result modal, execution progress, and intent-generation UI.
 - Added `tests/gpc-contract.test.ts` and the `test:gpc` script.
 
-## Deferred because backend repositories are read-only
+## Published canonical backend integration
 
-The Python compiler, FastAPI route package, builders, Poltergeist queue/cache/orchestrator, verification hooks, evidence pack, GitHub service exporter, and test executor remain package references. They are not copied into UACP v3 and no external repository was modified.
+The canonical FastAPI router is mounted from `backend.apps.gpc.routes` in `veklom-byos-backend`. Its active graph compile and governed execute contracts preserve authenticated workspace tenant identity and pipeline identity. The unreferenced legacy mock `backend/apps/gpc/gpc_routes.py` module was removed.
+
+The current backend intentionally returns explicit `501 Not Implemented` for natural-language generation, audit storage, statistics storage, and GitHub export because those services are not configured in the canonical route. No mock success is claimed.
+
+## Residual package work
+
+The package builders, queue/cache/debouncer, orchestrator, verification hooks, evidence pack, GitHub service exporter, test executors, Poltergeist watcher, and deployment script remain deferred package references. They require backend-owner reconciliation with existing runtime, governance, persistence, and deployment contracts. No CAPPO, cAPI, PGL, Genome Ledger/Gnomledger, Locus, or execution-authority architecture was modified.
 
 See [package-merge-matrix.md](./package-merge-matrix.md) and [backend-deferred-manifest.md](./backend-deferred-manifest.md).
 
@@ -24,22 +31,21 @@ See [package-merge-matrix.md](./package-merge-matrix.md) and [backend-deferred-m
 
 - `npm run test:gpc` — 5 passed.
 - `npm run lint` — passed.
-- `npm run build` — passed after elevated esbuild execution; Vite emitted only its existing chunk-size warning.
+- `npm run build` — passed; Vite emitted only its existing chunk-size warning.
+- Backend focused GPC suite — 10 passed after legacy-route cleanup.
+- Backend application import — passed.
 
-This is not a claim that the full cross-repository backend package is complete.
+## Historical route verification
 
-## Local route verification
+The committed [local-route-verification.json](./local-route-verification.json) records a 2026-07-29 UACP-only TypeScript route exercise. It is retained for provenance and is not evidence of the current Python backend or a Coolify deployment.
 
-On 2026-07-29, the local UACP v3 server was exercised with one generated graph. The exact request payloads and response bodies are recorded in [local-route-verification.json](./local-route-verification.json).
+Current canonical backend route status:
 
-- `GET /api/v1/gpc/components` — HTTP 200.
-- `POST /api/v1/gpc/generate` — HTTP 200; returned `pipeline_id=gpc_9283448a0cc9` and `tenant_id=tenant_verify`.
-- `POST /api/v1/gpc/compile` — HTTP 200; active graph included in request; returned `node_count=3`, valid generated Python, and execution order `input → normalize → result`.
-- `GET /api/v1/gpc/execute` — HTTP 200; streamed `start`, `node_start`, `node_complete` previews for all three nodes, and `complete`.
-- `POST /api/v1/gpc/export-github` — HTTP 200; returned `gpc-gpc_9283448a0cc9.yml` with a real curl-based compile/execute workflow artifact.
+- `GET /api/v1/gpc/components` — supported.
+- `POST /api/v1/gpc/compile` — supported for a non-empty active graph with matching authenticated tenant and pipeline identity.
+- `POST /api/v1/gpc/execute` — supported through the governed worker and SSE lifecycle.
+- `POST /api/v1/gpc/generate` — explicit `501` unavailable; no provider is configured.
+- `GET /api/v1/gpc/audit` and `/stats` — explicit `501` unavailable; storage is not configured.
+- GitHub workflow export — unavailable; the frontend does not send an unsupported request.
 
-This verifies the UACP v3 local route contract and frontend wiring target. It does not verify the deferred Python backend package or a browser-driven production deployment.
-
-## Deferred backend boundary
-
-The local UACP route lifecycle works with the current TypeScript server. The Python package remains deferred, so Python-side builder manufacturing, queue/cache/orchestrator execution, evidence-pack persistence, and governed backend deployment are not verified here. No full GPC integration claim is made.
+This does not verify Coolify deployment, production routing, or a browser-driven production execution.
