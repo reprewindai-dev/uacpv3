@@ -13,8 +13,6 @@ import {
   AlertCircle,
   Play,
   Github,
-  Copy,
-  ExternalLink,
   Loader,
   X,
 } from 'lucide-react';
@@ -247,219 +245,35 @@ interface GitHubExportDialogProps {
 }
 
 export const GitHubExportDialog: React.FC<GitHubExportDialogProps> = React.memo(
-  ({ isOpen, onClose, pipelineId, pipelineName }) => {
-    const [repoOwner, setRepoOwner] = useState('');
-    const [repoName, setRepoName] = useState('');
-    const [githubToken, setGithubToken] = useState('');
-    const [schedule, setSchedule] = useState('0 0 * * *'); // daily midnight
-    const [isExporting, setIsExporting] = useState(false);
-    const [exportResult, setExportResult] = useState<any>(null);
-
-    const handleExport = useCallback(() => {
-      setExportResult({
-        status: 'failed',
-        error: 'GitHub workflow export is unavailable in the canonical GPC backend.',
-      });
-    }, []);
-
+  ({ isOpen, onClose }) => {
     if (!isOpen) return null;
 
     return (
       <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
         <div className="bg-white rounded-lg shadow-2xl max-w-lg w-full mx-4">
-          {/* Header */}
           <div className="border-b border-gray-200 p-6 flex items-center justify-between">
             <div className="flex items-center gap-3">
               <Github size={24} className="text-gray-900" />
               <h2 className="text-xl font-bold text-gray-900">
-                Export to GitHub Actions
+                GitHub Workflow Export
               </h2>
             </div>
-            <button
-              onClick={onClose}
-              className="p-2 hover:bg-gray-100 rounded-lg"
-            >
+            <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg">
               <X size={20} />
             </button>
           </div>
-
-          {!exportResult ? (
-            <div className="p-6 space-y-4">
-              <p className="text-sm text-gray-600">
-                GitHub workflow export is not available in the canonical GPC backend. No token or repository data will be sent.
-              </p>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  GitHub Username/Org
-                </label>
-                <input
-                  type="text"
-                  value={repoOwner}
-                  onChange={(e) => setRepoOwner(e.target.value)}
-                  placeholder="e.g., acme-corp"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  disabled={isExporting}
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Repository Name
-                </label>
-                <input
-                  type="text"
-                  value={repoName}
-                  onChange={(e) => setRepoName(e.target.value)}
-                  placeholder="e.g., data-pipelines"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  disabled={isExporting}
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  GitHub Personal Access Token
-                </label>
-                <input
-                  type="password"
-                  value={githubToken}
-                  onChange={(e) => setGithubToken(e.target.value)}
-                  placeholder="ghp_..."
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-mono text-sm"
-                  disabled={isExporting}
-                />
-                <p className="text-xs text-gray-500 mt-1">
-                  <a
-                    href="https://github.com/settings/tokens/new"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-600 hover:underline"
-                  >
-                    Create a token
-                  </a>{' '}
-                  with repo access
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Execution Schedule (cron)
-                </label>
-                <input
-                  type="text"
-                  value={schedule}
-                  onChange={(e) => setSchedule(e.target.value)}
-                  placeholder="0 0 * * * (daily at midnight)"
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  disabled={isExporting}
-                />
-              </div>
-
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-900">
-                ℹ️ Your workflow will:
-                <ul className="mt-2 space-y-1 ml-4">
-                  <li>✅ Compile on every commit</li>
-                  <li>✅ Test on staging automatically</li>
-                  <li>✅ Require manual approval to deploy to production</li>
-                  <li>✅ Run on schedule (if configured)</li>
-                </ul>
-              </div>
-
-              <div className="flex gap-2 justify-end pt-4">
-                <button
-                  onClick={onClose}
-                  className="px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
-                  disabled={isExporting}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleExport}
-                  className="px-4 py-2 text-sm font-medium text-white bg-gray-500 rounded-lg hover:bg-gray-600 flex items-center gap-2"
-                >
-                  <Github size={16} />
-                  Show unavailable status
-                </button>
-              </div>
+          <div className="p-6 space-y-4">
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-900">
+              GitHub workflow export is unavailable in the canonical GPC backend.
+              No repository credentials or pipeline data will be sent.
             </div>
-          ) : (
-            <div className="p-6">
-              {exportResult.status === 'success' ? (
-                <div className="space-y-4">
-                  <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-center">
-                    <CheckCircle size={32} className="text-green-600 mx-auto mb-2" />
-                    <h3 className="font-semibold text-green-900">
-                      Workflow Exported!
-                    </h3>
-                    <p className="text-sm text-green-800 mt-1">
-                      Your pipeline is now deployed via GitHub Actions
-                    </p>
-                  </div>
-
-                  <div className="bg-gray-50 rounded-lg p-4 space-y-2 text-sm">
-                    <div>
-                      <strong>Repository:</strong>{' '}
-                      <code className="bg-white px-2 py-1 rounded text-xs">
-                        {repoOwner}/{repoName}
-                      </code>
-                    </div>
-                    <div>
-                      <strong>Workflow File:</strong>{' '}
-                      <code className="bg-white px-2 py-1 rounded text-xs">
-                        .github/workflows/gpc-{pipelineId}.yml
-                      </code>
-                    </div>
-                    <div>
-                      <strong>Next Steps:</strong>
-                      <ol className="mt-2 ml-4 space-y-1">
-                        <li>1. Commit changes to main branch</li>
-                        <li>2. Workflow runs automatically</li>
-                        <li>3. Approve deployment in GitHub</li>
-                        <li>4. Pipeline deploys to production</li>
-                      </ol>
-                    </div>
-                  </div>
-
-                  {exportResult.workflow_url && (
-                    <a
-                      href={exportResult.workflow_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="block w-full px-4 py-2 text-center text-sm font-medium text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 flex items-center justify-center gap-2"
-                    >
-                      <ExternalLink size={16} />
-                      View Workflow
-                    </a>
-                  )}
-
-                  <button
-                    onClick={onClose}
-                    className="w-full px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700"
-                  >
-                    Close
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-center">
-                    <AlertCircle size={32} className="text-red-600 mx-auto mb-2" />
-                    <h3 className="font-semibold text-red-900">Export Failed</h3>
-                    <p className="text-sm text-red-800 mt-2">
-                      {exportResult.error}
-                    </p>
-                  </div>
-
-                  <button
-                    onClick={() => setExportResult(null)}
-                    className="w-full px-4 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50"
-                  >
-                    Try Again
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
+            <button
+              onClick={onClose}
+              className="w-full px-4 py-2 text-sm font-medium text-white bg-gray-600 rounded-lg hover:bg-gray-700"
+            >
+              Close
+            </button>
+          </div>
         </div>
       </div>
     );

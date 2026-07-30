@@ -244,8 +244,7 @@ export default function GpcPage() {
           </button>
 
           <button
-            onClick={() => setShowGitHubDialog(true)}
-            disabled={isExecuting || !compilationModal.pythonCode}
+            disabled={true}
             className={`px-4 py-2 text-sm font-medium rounded text-white flex items-center gap-2 transition-colors ${
               deploymentStatus === 'tested'
                 ? 'bg-purple-600 hover:bg-purple-700'
@@ -253,20 +252,20 @@ export default function GpcPage() {
             }`}
             title={
               deploymentStatus === 'tested'
-                ? 'Deploy via GitHub Actions'
-                : 'Run test first'
+                ? 'GitHub workflow export unavailable'
+                : 'GitHub workflow export unavailable'
             }
           >
             <Github size={16} />
-            Deploy to GitHub Actions
+            GitHub export unavailable
           </button>
         </div>
 
         {/* Info banner */}
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-900">
-          <strong>Workflow:</strong> 1) Generate from intent or build manually 2) Compile
-          to Python 3) Test on sample data 4) Deploy to GitHub Actions (auto-runs on
-          commit with manual approval gate)
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900">
+          <strong>Workflow:</strong> Generate or edit the graph, compile it, then
+          run governed execution. GitHub workflow export is currently
+          unavailable.
         </div>
       </div>
 
