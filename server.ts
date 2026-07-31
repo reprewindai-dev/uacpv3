@@ -97,7 +97,7 @@ import type {
   WorkerRegistryEntry,
 } from "./src/types";
 
-const PORT = Number(process.env.PORT || 3000);
+const PORT = Number(process.env.PORT || 3012);
 const TOOL_NAME = "uacpv3-control-plane";
 const CONTACT_EMAIL = process.env.CONTACT_EMAIL || process.env.USER_EMAIL || "founder@uacp.local";
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), "data");
