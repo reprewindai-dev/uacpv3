@@ -5,6 +5,19 @@ import type {
   PreviewData,
 } from "../types/gpc";
 
+export type CanvasGraphSnapshot = Pick<GPCPipelineGraph, "pipeline_id" | "tenant_id" | "nodes" | "edges">;
+
+export function buildActiveGraph(snapshot: CanvasGraphSnapshot): GPCPipelineGraph {
+  return {
+    pipeline_id: snapshot.pipeline_id,
+    tenant_id: snapshot.tenant_id,
+    nodes: snapshot.nodes,
+    edges: snapshot.edges,
+    schema_version: "1.0",
+  };
+}
+
+
 export type GpcCompileRequest = {
   pipeline_id: string;
   tenant_id: string;

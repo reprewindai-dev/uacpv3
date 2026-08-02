@@ -4,6 +4,7 @@ import type { GPCPipelineGraph } from "../src/types/gpc";
 import { useCanvasStore } from "../src/stores/gpc_stores";
 import {
   applyTestEvent,
+  buildActiveGraph,
   buildCompileRequest,
   createTestDeployState,
   parseCompilationResponse,
@@ -36,6 +37,16 @@ test("graph identity survives canvas load and export", () => {
   assert.deepEqual(exported.nodes, graph.nodes);
   assert.deepEqual(exported.edges, graph.edges);
 });
+test("active graph snapshot preserves identity and serializes the complete graph", () => {
+  const active = buildActiveGraph({
+    pipeline_id: graph.pipeline_id,
+    tenant_id: graph.tenant_id,
+    nodes: graph.nodes,
+    edges: graph.edges,
+  });
+  assert.deepEqual(active, { ...graph, schema_version: "1.0" });
+});
+
 test("graph identity survives the compile request serialization", () => {
   const request = buildCompileRequest(graph);
   assert.equal(request.pipeline_id, "pipeline_sales");

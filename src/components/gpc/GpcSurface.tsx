@@ -7,7 +7,7 @@
 
 'use client';
 
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   BookOpen,
   Play,
@@ -25,6 +25,7 @@ import {
   GitHubExportDialog,
 } from '@/components/gpc/GpcTestDeployUI';
 import { useCanvasStore, useExecutionStore, usePreviewStore } from '../../stores/gpc_stores';
+import { buildActiveGraph } from '../../gpc/contracts';
 
 const Shell = ({ children }: { children: React.ReactNode }) => <div className="flex flex-col min-h-screen bg-gray-50 p-6">{children}</div>;
 const Pill = ({ children, tone, dot }: { children: React.ReactNode; tone: string; dot?: boolean }) => (
@@ -60,7 +61,13 @@ export default function GpcPage() {
   });
 
   const pipelineId = useCanvasStore((state) => state.pipelineId);
-  const activeGraph = useCanvasStore((state) => state.exportGraph());
+  const tenantId = useCanvasStore((state) => state.tenantId);
+  const nodes = useCanvasStore((state) => state.nodes);
+  const edges = useCanvasStore((state) => state.edges);
+  const activeGraph = useMemo(
+    () => buildActiveGraph({ pipeline_id: pipelineId, tenant_id: tenantId, nodes, edges }),
+    [pipelineId, tenantId, nodes, edges],
+  );
   const isExecuting = useExecutionStore((state) => state.isRunning);
   const progress = useExecutionStore((state) => state.getRunProgress());
   const selectedPreview = usePreviewStore((state) => {
