@@ -29,7 +29,7 @@ See [package-merge-matrix.md](./package-merge-matrix.md) and [backend-deferred-m
 
 ## Validation
 
-- `npm run test:gpc` — 5 passed.
+- `npm run test:gpc` — 6 passed.
 - `npm run lint` — passed.
 - `npm run build` — passed; Vite emitted only its existing chunk-size warning.
 - Backend focused GPC suite — 12 passed after governed generation integration.
