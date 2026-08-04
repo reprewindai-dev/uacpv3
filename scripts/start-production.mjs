@@ -1,3 +1,5 @@
+import "dotenv/config";
+
 const CANONICAL_PRODUCTION_PORT = "3010";
 
 if (!process.env.PORT) {
