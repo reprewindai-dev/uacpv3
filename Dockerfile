@@ -14,13 +14,13 @@ RUN npm install react-is --legacy-peer-deps
 # Build the frontend (Vite)
 RUN npm run build
 
-# Expose the Golden Bible GPC frontend port used by Coolify/Traefik.
-ENV PORT=3012
+# Canonical production port for the root GPC/UACP V3 control plane.
+ENV PORT=3010
 ENV NODE_ENV=production
-EXPOSE 3012
+EXPOSE 3010
 
 LABEL org.opencontainers.image.source="uacpv3"
 LABEL org.opencontainers.image.revision="d54955caeaadd6663f8080b956d2aa6bea9e95c4"
 
-# Start the Express server
+# Start the Express server through the production runtime guard.
 CMD ["npm", "start"]
