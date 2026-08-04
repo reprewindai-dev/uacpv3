@@ -10,6 +10,8 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: PORT
+        value: "3010"
       - key: USER_EMAIL
         value: founder@company.com
       - key: CONTACT_EMAIL
@@ -29,7 +31,7 @@ services:
       - key: HF_BASE_URL
         value: https://router.huggingface.co/v1
       - key: OLLAMA_BASE_URL
-        value: http://127.0.0.1:11434
+        sync: false
       - key: OLLAMA_MODEL
         sync: false
       - key: OLLAMA_API_KEY
@@ -77,7 +79,7 @@ services:
       - key: QSTASH_NEXT_SIGNING_KEY
         sync: false
       - key: UACP_PUBLIC_BASE_URL
-        value: https://uacpv3.onrender.com
+        value: https://gpc.veklom.com
       - key: UACP_QSTASH_QUEUE_NAME
         value: uacp-worker-conveyor
       - key: UACP_QSTASH_CONVEYOR_SCHEDULE_ID
