@@ -4,9 +4,10 @@
   "version": "3.0.0",
   "type": "module",
   "scripts": {
-    "dev": "node ./node_modules/tsx/dist/cli.mjs server.ts",
+    "dev": "node --import tsx scripts/start-root.mjs",
     "build": "node ./node_modules/vite/bin/vite.js build",
-    "start": "node ./node_modules/tsx/dist/cli.mjs server.ts",
+    "start": "node --import tsx scripts/start-root.mjs",
+    "check:production-port": "node scripts/check-production-port.mjs",
     "worker:pillar-council": "node ./node_modules/tsx/dist/cli.mjs src/workers/pillar-council.ts",
     "worker:growth-sales": "node ./node_modules/tsx/dist/cli.mjs src/workers/growth-sales.ts",
     "worker:operations-intake": "node ./node_modules/tsx/dist/cli.mjs src/workers/operations-intake.ts",
