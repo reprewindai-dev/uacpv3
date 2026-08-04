@@ -1,0 +1,107 @@
+# Instincts generated from https://github.com/reprewindai-dev/uacpv3
+# Generated: 2026-08-04T11:07:32.883Z
+# Version: 2.0
+# NOTE: This file supplements (does not replace) any existing curated instincts.
+# High-confidence manually curated instincts should be preserved alongside these.
+
+---
+id: uacpv3-commit-conventional
+trigger: "when writing a commit message"
+confidence: 0.85
+domain: git
+source: repo-analysis
+source_repo: https://github.com/reprewindai-dev/uacpv3
+---
+
+# Uacpv3 Commit Conventional
+
+## Action
+
+Use conventional commit format with prefixes: fix, test
+
+## Evidence
+
+- 5 commits analyzed
+- Detected conventional commit pattern
+- Examples: fix(runtime): restore canonical GPC port 3010, test(runtime): prevent forbidden production ports
+
+---
+id: uacpv3-commit-length
+trigger: "when writing a commit message"
+confidence: 0.6
+domain: git
+source: repo-analysis
+source_repo: https://github.com/reprewindai-dev/uacpv3
+---
+
+# Uacpv3 Commit Length
+
+## Action
+
+Keep commit messages concise (~46 characters)
+
+## Evidence
+
+- Average commit message length: 46 chars
+- Based on 5 commits
+
+---
+id: uacpv3-naming-files
+trigger: "when creating a new file"
+confidence: 0.8
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/reprewindai-dev/uacpv3
+---
+
+# Uacpv3 Naming Files
+
+## Action
+
+Use camelCase naming convention
+
+## Evidence
+
+- Analyzed file naming patterns in repository
+- Dominant pattern: camelCase
+
+---
+id: uacpv3-export-style
+trigger: "when exporting from a module"
+confidence: 0.7
+domain: code-style
+source: repo-analysis
+source_repo: https://github.com/reprewindai-dev/uacpv3
+---
+
+# Uacpv3 Export Style
+
+## Action
+
+Prefer named exports
+
+## Evidence
+
+- Export pattern analysis
+- Dominant style: named
+
+---
+id: uacpv3-test-separate
+trigger: "when writing tests"
+confidence: 0.8
+domain: testing
+source: repo-analysis
+source_repo: https://github.com/reprewindai-dev/uacpv3
+---
+
+# Uacpv3 Test Separate
+
+## Action
+
+Place tests in the tests/ or __tests__/ directory, mirroring src structure
+
+## Evidence
+
+- Separate test directory pattern detected
+- Tests live in dedicated test folders
+
