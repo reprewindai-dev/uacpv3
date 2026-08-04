@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "node ./node_modules/tsx/dist/cli.mjs server.ts",
     "build": "node ./node_modules/vite/bin/vite.js build",
-    "start": "node ./node_modules/tsx/dist/cli.mjs server.ts",
+    "start": "node ./node_modules/tsx/dist/cli.mjs scripts/start-production.mjs",
     "worker:pillar-council": "node ./node_modules/tsx/dist/cli.mjs src/workers/pillar-council.ts",
     "worker:growth-sales": "node ./node_modules/tsx/dist/cli.mjs src/workers/growth-sales.ts",
     "worker:operations-intake": "node ./node_modules/tsx/dist/cli.mjs src/workers/operations-intake.ts",
@@ -16,7 +16,8 @@
     "box:setup:fleet": "node scripts/setup-upstash-fleet.mjs",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
     "lint": "node ./node_modules/typescript/bin/tsc --noEmit",
-    "test:gpc": "node --import tsx --test tests/gpc-contract.test.ts"
+    "test:gpc": "node --import tsx --test tests/gpc-contract.test.ts",
+    "test:runtime-port": "node --test tests/runtime-port-contract.test.mjs"
   },
   "dependencies": {
     "@glideapps/glide-data-grid": "^6.0.3",
