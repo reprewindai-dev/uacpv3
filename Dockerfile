@@ -20,7 +20,6 @@ ENV NODE_ENV=production
 EXPOSE 3010
 
 LABEL org.opencontainers.image.source="uacpv3"
-LABEL org.opencontainers.image.revision="d54955caeaadd6663f8080b956d2aa6bea9e95c4"
 
 # Start the Express server through the production runtime guard.
 CMD ["npm", "start"]
