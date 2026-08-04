@@ -7,14 +7,14 @@
  */
 
 import { useCallback, useState } from 'react';
-import { useCanvasStore, useExecutionStore, usePreviewStore } from '../stores/gpc_stores';
+import { useCanvasStore, useExecutionStore, usePreviewStore } from '@/lib/gpc/stores';
 import {
   GPCPipelineGraph,
   NLToGraphRequest,
   NLToGraphResult,
   PipelineCompilationResult,
   ExecutionEvent,
-} from '../types/gpc_types';
+} from '@/types/gpc';
 
 interface UseGpcOptions {
   baseUrl?: string;

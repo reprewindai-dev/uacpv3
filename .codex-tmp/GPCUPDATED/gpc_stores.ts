@@ -7,7 +7,7 @@
 
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
-import { GPCNode, GPCEdge, GPCPipelineGraph, PortType, NodeExecutionState, PreviewData } from '../types/gpc_types';
+import { GPCNode, GPCEdge, GPCPipelineGraph, PortType, NodeExecutionState, PreviewData } from '@/types/gpc';
 
 // ============================================================================
 // CANVAS STORE — Node/Edge state only (UI structure)
@@ -15,17 +15,11 @@ import { GPCNode, GPCEdge, GPCPipelineGraph, PortType, NodeExecutionState, Previ
 
 interface CanvasStore {
   // State
-  pipelineId: string;
-  tenantId: string;
   nodes: GPCNode[];
   edges: GPCEdge[];
   selectedNodeIds: Set<string>;
   zoom: number;
   pan: { x: number; y: number };
-
-  // Pipeline identity
-  setPipelineId: (id: string) => void;
-  setTenantId: (id: string) => void;
 
   // Node mutations
   addNode: (node: GPCNode) => void;
@@ -56,16 +50,11 @@ interface CanvasStore {
 
 export const useCanvasStore = create<CanvasStore>()(
   subscribeWithSelector((set, get) => ({
-    pipelineId: '',
-    tenantId: '',
     nodes: [],
     edges: [],
     selectedNodeIds: new Set(),
     zoom: 1,
     pan: { x: 0, y: 0 },
-
-    setPipelineId: (id) => set({ pipelineId: id }),
-    setTenantId: (id) => set({ tenantId: id }),
 
     addNode: (node) =>
       set((state) => ({
