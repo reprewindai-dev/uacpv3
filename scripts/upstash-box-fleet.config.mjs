@@ -1,6 +1,6 @@
 export const BOX_WORKSPACE = "/workspace/home/uacpv3";
 export const DEFAULT_BOX_SIZE = "small";
-export const DEFAULT_BOX_PORT = 3000;
+export const DEFAULT_BOX_PORT = 3010;
 
 export const boxFleetSpecs = [
   {
