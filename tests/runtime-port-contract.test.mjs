@@ -14,21 +14,28 @@ function runGuard(port) {
 }
 
 test("root production source contract is pinned to canonical port 3010", async () => {
-  const [dockerfile, envExample, packageJson, renderYaml] = await Promise.all([
+  const [dockerfile, envExample, packageJson, renderYaml, boxSetup, boxFleet] = await Promise.all([
     read("Dockerfile"),
     read(".env.example"),
     read("package.json"),
     read("render.yaml"),
+    read("scripts/setup-upstash-box.mjs"),
+    read("scripts/upstash-box-fleet.config.mjs"),
   ]);
 
   assert.match(dockerfile, /^ENV PORT=3010$/m);
   assert.match(dockerfile, /^EXPOSE 3010$/m);
   assert.doesNotMatch(dockerfile, /^(?:ENV PORT=|EXPOSE )(?:3000|3012|8000)$/m);
   assert.match(envExample, /^PORT="3010"$/m);
+  assert.match(envExample, /^UACP_BOX_PORT="3010"$/m);
+  assert.doesNotMatch(envExample, /^(?:PORT|UACP_BOX_PORT)="(?:3000|3012|8000)"$/m);
   assert.match(envExample, /^UACP_PUBLIC_BASE_URL="https:\/\/gpc\.veklom\.com"$/m);
-  assert.match(envExample, /^UACP_BOX_PORT="3000"$/m);
   assert.match(renderYaml, /- key: PORT\n\s+value: "3010"/m);
   assert.match(renderYaml, /- key: UACP_PUBLIC_BASE_URL\n\s+value: https:\/\/gpc\.veklom\.com/m);
+  assert.match(boxSetup, /process\.env\.UACP_BOX_PORT \|\| process\.env\.PORT \|\| 3010/);
+  assert.doesNotMatch(boxSetup, /process\.env\.UACP_BOX_PORT \|\| process\.env\.PORT \|\| (?:3000|3012|8000)/);
+  assert.match(boxFleet, /^export const DEFAULT_BOX_PORT = 3010;$/m);
+  assert.doesNotMatch(boxFleet, /^export const DEFAULT_BOX_PORT = (?:3000|3012|8000);$/m);
 
   const pkg = JSON.parse(packageJson);
   assert.equal(pkg.scripts.start, "node ./node_modules/tsx/dist/cli.mjs scripts/start-production.mjs");
