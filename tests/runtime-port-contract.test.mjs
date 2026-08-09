@@ -14,13 +14,14 @@ function runGuard(port) {
 }
 
 test("root production source contract is pinned to canonical port 3010", async () => {
-  const [dockerfile, envExample, packageJson, renderYaml, boxSetup, boxFleet] = await Promise.all([
+  const [dockerfile, envExample, packageJson, renderYaml, boxSetup, boxFleet, rootServer] = await Promise.all([
     read("Dockerfile"),
     read(".env.example"),
     read("package.json"),
     read("render.yaml"),
     read("scripts/setup-upstash-box.mjs"),
     read("scripts/upstash-box-fleet.config.mjs"),
+    read("server.ts"),
   ]);
 
   assert.match(dockerfile, /^ENV PORT=3010$/m);
@@ -36,6 +37,8 @@ test("root production source contract is pinned to canonical port 3010", async (
   assert.doesNotMatch(boxSetup, /process\.env\.UACP_BOX_PORT \|\| process\.env\.PORT \|\| (?:3000|3012|8000)/);
   assert.match(boxFleet, /^export const DEFAULT_BOX_PORT = 3010;$/m);
   assert.doesNotMatch(boxFleet, /^export const DEFAULT_BOX_PORT = (?:3000|3012|8000);$/m);
+  assert.match(rootServer, /const PORT = Number\(process\.env\.PORT \|\| 3010\);/);
+  assert.doesNotMatch(rootServer, /const PORT = Number\(process\.env\.PORT \|\| (?:3000|3012|8000)\);/);
 
   const pkg = JSON.parse(packageJson);
   assert.equal(pkg.scripts.start, "node ./node_modules/tsx/dist/cli.mjs scripts/start-production.mjs");
