@@ -15,9 +15,9 @@ RUN npm install react-is --legacy-peer-deps
 RUN npm run build
 
 # Canonical production port for the root GPC/UACP V3 control plane.
-ENV PORT=3010
+ENV PORT=3012
 ENV NODE_ENV=production
-EXPOSE 3010
+EXPOSE 3012
 
 LABEL org.opencontainers.image.source="uacpv3"
 

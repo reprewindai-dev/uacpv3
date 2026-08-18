@@ -1,6 +1,6 @@
 import "dotenv/config";
 
-const CANONICAL_PRODUCTION_PORT = "3010";
+const CANONICAL_PRODUCTION_PORT = "3012";
 
 if (!process.env.PORT) {
   process.env.PORT = CANONICAL_PRODUCTION_PORT;
