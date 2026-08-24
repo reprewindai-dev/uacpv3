@@ -13,7 +13,7 @@ function runGuard(port) {
   return spawnSync(process.execPath, [launcher.pathname], { env, encoding: "utf8" });
 }
 
-test("root production source contract is pinned to canonical port 3012", async () => {
+test("root production source contract is pinned to canonical port 3010", async () => {
   const [dockerfile, envExample, packageJson, renderYaml, boxSetup, boxFleet, rootServer] = await Promise.all([
     read("Dockerfile"),
     read(".env.example"),
@@ -24,36 +24,36 @@ test("root production source contract is pinned to canonical port 3012", async (
     read("server.ts"),
   ]);
 
-  assert.match(dockerfile, /^ENV PORT=3012$/m);
-  assert.match(dockerfile, /^EXPOSE 3012$/m);
+  assert.match(dockerfile, /^ENV PORT=3010$/m);
+  assert.match(dockerfile, /^EXPOSE 3010$/m);
   assert.doesNotMatch(dockerfile, /^(?:ENV PORT=|EXPOSE )(?:3000|3012|8000)$/m);
-  assert.match(envExample, /^PORT="3012"$/m);
-  assert.match(envExample, /^UACP_BOX_PORT="3012"$/m);
+  assert.match(envExample, /^PORT="3010"$/m);
+  assert.match(envExample, /^UACP_BOX_PORT="3010"$/m);
   assert.doesNotMatch(envExample, /^(?:PORT|UACP_BOX_PORT)="(?:3000|3012|8000)"$/m);
   assert.match(envExample, /^UACP_PUBLIC_BASE_URL="https:\/\/gpc\.veklom\.com"$/m);
-  assert.match(renderYaml, /- key: PORT\n\s+value: "3012"/m);
+  assert.match(renderYaml, /- key: PORT\n\s+value: "3010"/m);
   assert.match(renderYaml, /- key: UACP_PUBLIC_BASE_URL\n\s+value: https:\/\/gpc\.veklom\.com/m);
-  assert.match(boxSetup, /process\.env\.UACP_BOX_PORT \|\| process\.env\.PORT \|\| 3012/);
+  assert.match(boxSetup, /process\.env\.UACP_BOX_PORT \|\| process\.env\.PORT \|\| 3010/);
   assert.doesNotMatch(boxSetup, /process\.env\.UACP_BOX_PORT \|\| process\.env\.PORT \|\| (?:3000|3012|8000)/);
-  assert.match(boxFleet, /^export const DEFAULT_BOX_PORT = 3012;$/m);
+  assert.match(boxFleet, /^export const DEFAULT_BOX_PORT = 3010;$/m);
   assert.doesNotMatch(boxFleet, /^export const DEFAULT_BOX_PORT = (?:3000|3012|8000);$/m);
-  assert.match(rootServer, /const PORT = Number\(process\.env\.PORT \|\| 3012\);/);
+  assert.match(rootServer, /const PORT = Number\(process\.env\.PORT \|\| 3010\);/);
   assert.doesNotMatch(rootServer, /const PORT = Number\(process\.env\.PORT \|\| (?:3000|3012|8000)\);/);
 
   const pkg = JSON.parse(packageJson);
   assert.equal(pkg.scripts.start, "node ./node_modules/tsx/dist/cli.mjs scripts/start-production.mjs");
 });
 
-test("production launcher defaults an unset PORT to 3012", () => {
+test("production launcher defaults an unset PORT to 3010", () => {
   const result = runGuard(undefined);
   assert.equal(result.status, 0, result.stderr);
 });
 
-test("production launcher accepts only 3012", () => {
-  assert.equal(runGuard("3012").status, 0);
+test("production launcher accepts only 3010", () => {
+  assert.equal(runGuard("3010").status, 0);
   for (const port of ["3000", "3012", "8000", "9999"]) {
     const result = runGuard(port);
     assert.notEqual(result.status, 0, `port ${port} must be rejected`);
-    assert.match(result.stderr, /production requires 3012/);
+    assert.match(result.stderr, /production requires 3010/);
   }
 });
